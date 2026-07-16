@@ -16,14 +16,14 @@ final class Runtime
     public function __construct(public readonly string $root)
     {
         \Dotenv\Dotenv::createImmutable(paths: $root)->safeLoad();
-        foreach (['DB_HOST', 'APP_DATABASE', 'REWE_COOKIE_FILE'] as $pathVariable) {
+        foreach (['DB_HOST'] as $pathVariable) {
             $path = (string) ($_SERVER[$pathVariable] ?? '');
             if ($path !== '' && !str_starts_with(haystack: $path, needle: '/')) {
                 $_SERVER[$pathVariable] = $root . '/' . ltrim(string: $path, characters: '/');
             }
         }
-        $databasePath = (string) ($_SERVER['APP_DATABASE'] ?? $root . '/.data/mampf.sqlite');
-        $cookieFile = (string) ($_SERVER['REWE_COOKIE_FILE'] ?? $root . '/.data/cookies/rewe.json');
+        $databasePath = $root . '/.data/mampf.sqlite';
+        $cookieFile = $root . '/.data/cookies/rewe-shop.json';
         $this->database = new Database(path: $databasePath);
         $this->httpClient = new HttpClient(impersonateBinary: $root . '/.bin/curl-impersonate');
         $this->helloFreshScraper = new HelloFreshScraper(database: $this->database, httpClient: $this->httpClient);

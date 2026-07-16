@@ -1,7 +1,18 @@
+import 'sweetalert2/dist/sweetalert2.min.css';
 import './app.css';
 import { createIcons, icons } from 'lucide';
+import Swal from 'sweetalert2';
 
 createIcons({ icons });
+
+let showError = message =>
+    Swal.fire({
+        title: 'Fehler',
+        text: message,
+        icon: 'error',
+        confirmButtonText: 'OK',
+        confirmButtonColor: '#047857'
+    });
 
 let $loginForm = document.querySelector('[data-login-form]');
 if ($loginForm !== null) {
@@ -52,10 +63,32 @@ if ($logout !== null) {
     });
 }
 
+let confirmedForms = new WeakSet();
 document.querySelectorAll('[data-confirm]').forEach($form => {
-    $form.addEventListener('submit', event => {
-        if (!window.confirm($form.dataset.confirm)) {
-            event.preventDefault();
+    $form.addEventListener('submit', async event => {
+        if (confirmedForms.has($form)) {
+            return;
+        }
+        event.preventDefault();
+        let result = await Swal.fire({
+            title: $form.dataset.confirmTitle,
+            text: $form.dataset.confirm,
+            icon: $form.dataset.confirmIcon || 'warning',
+            showCancelButton: true,
+            confirmButtonText: $form.dataset.confirmButton || 'SICHER',
+            cancelButtonText: 'Abbrechen',
+            confirmButtonColor: $form.dataset.confirmIcon === 'error' ? '#b91c1c' : '#047857',
+            cancelButtonColor: '#57534e',
+            focusCancel: true,
+            reverseButtons: true
+        });
+        if (result.isConfirmed) {
+            confirmedForms.add($form);
+            if (event.submitter instanceof HTMLElement) {
+                $form.requestSubmit(event.submitter);
+                return;
+            }
+            $form.requestSubmit();
         }
     });
 });
@@ -200,7 +233,7 @@ document.addEventListener('click', async event => {
         $summary.innerHTML = result.summary_html;
         createIcons({ icons, root: $summary });
     } catch (error) {
-        window.alert(error instanceof Error ? error.message : 'Die Bewertung konnte nicht gespeichert werden.');
+        showError(error instanceof Error ? error.message : 'Die Bewertung konnte nicht gespeichert werden.');
     } finally {
         $buttons.forEach($ratingButton => ($ratingButton.disabled = false));
     }
@@ -358,7 +391,7 @@ if ($taskForm !== null) {
             }
         } catch (error) {
             if (showState) {
-                window.alert(error instanceof Error ? error.message : 'Der Vorgang konnte nicht gestoppt werden.');
+                showError(error instanceof Error ? error.message : 'Der Vorgang konnte nicht gestoppt werden.');
             }
             cancellationSent = false;
             return;

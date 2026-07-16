@@ -30,6 +30,43 @@ final class ReweClientTest extends TestCase
         unlink(filename: $path);
     }
 
+    public function testShopAndAccountCookieExportsAreCombined(): void
+    {
+        $directory = sys_get_temp_dir() . '/mampf-cookies-' . bin2hex(string: random_bytes(length: 8));
+        mkdir(directory: $directory);
+        $cookieDirectory = $directory . '/cookies';
+        mkdir(directory: $cookieDirectory);
+        $shopPath = $cookieDirectory . '/rewe-shop.json';
+        $accountPath = $cookieDirectory . '/rewe-account.json';
+        file_put_contents(
+            filename: $shopPath,
+            data: json_encode(
+                value: [['name' => 'rstp', 'value' => 'shop', 'domain' => '.www.rewe.de', 'path' => '/']],
+                flags: JSON_THROW_ON_ERROR
+            )
+        );
+        file_put_contents(
+            filename: $accountPath,
+            data: json_encode(
+                value: [['name' => 'sso', 'value' => 'account', 'domain' => 'account.rewe.de', 'path' => '/']],
+                flags: JSON_THROW_ON_ERROR
+            )
+        );
+        $client = $this->client(cookieFile: $shopPath);
+        $method = new \ReflectionClass(objectOrClass: $client)->getMethod(name: 'cookieHeader');
+        $jarMethod = new \ReflectionClass(objectOrClass: $client)->getMethod(name: 'cookieJar');
+
+        $this->assertSame('rstp=shop', $method->invoke($client, 'https://www.rewe.de/shop'));
+        $this->assertSame('sso=account', $method->invoke($client, 'https://account.rewe.de/realms/sso/account'));
+        $this->assertSame($directory . '/rewe.json.jar', $jarMethod->invoke($client));
+        $this->assertFileExists($directory . '/rewe.json.jar');
+        unlink(filename: $shopPath);
+        unlink(filename: $accountPath);
+        unlink(filename: $directory . '/rewe.json.jar');
+        rmdir(directory: $cookieDirectory);
+        rmdir(directory: $directory);
+    }
+
     public function testProductsAreParsedAndRankedWithSmallDiscountBonus(): void
     {
         $client = $this->client();
@@ -48,11 +85,23 @@ final class ReweClientTest extends TestCase
     public function testBasketStateIsParsed(): void
     {
         $basket = $this->client()->parseBasket(
-            html: '<script>window.ReweBasket.id = "basket-1"; window.ReweBasket.listingIdToQuantityLookup = {"listing-a":2,"listing-b":1};</script>'
+            html: '<script>window.ReweBasket.id = "basket-1"; window.ReweBasket.listingIdToQuantityLookup = {"listing-a":2,"listing-b":1};</script><script type="application/json">{&quot;isLoggedIn&quot;:true}</script>'
         );
 
         $this->assertSame('basket-1', $basket['id']);
         $this->assertSame(['listing-a', 'listing-b'], $basket['listing_ids']);
+        $this->assertTrue($basket['logged_in']);
+    }
+
+    public function testEmptyLoggedOutBasketStateIsParsed(): void
+    {
+        $basket = $this->client()->parseBasket(
+            html: '<script>window.ReweBasket.id = ""; window.ReweBasket.listingIdToQuantityLookup = {};</script><script type="application/json">{&quot;isLoggedIn&quot;:false}</script>'
+        );
+
+        $this->assertSame('', $basket['id']);
+        $this->assertSame([], $basket['listing_ids']);
+        $this->assertFalse($basket['logged_in']);
     }
 
     public function testEmptySearchResultIsReadFromCache(): void

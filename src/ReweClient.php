@@ -12,7 +12,7 @@ final class ReweClient
 {
     private const BASE_URL = 'https://www.rewe.de';
     private const SEARCH_URL = self::BASE_URL . '/shop/productList';
-    private const BASKET_URL = self::BASE_URL . '/shop/basket';
+    private const BASKET_URL = self::BASE_URL . '/shop/checkout/basket';
     private const CACHE_TTL_SECONDS = 60 * 60 * 6;
 
     public function __construct(
@@ -97,10 +97,23 @@ final class ReweClient
             );
         }
         $basket = $this->parseBasket(html: $basketResponse->body);
-        if ($basket['id'] === '') {
+        if (!$basket['logged_in']) {
+            $this->request(url: self::BASE_URL . '/mydata/login');
+            $basketResponse = $this->request(url: self::BASKET_URL);
+            if ($basketResponse->status !== 200) {
+                throw new RuntimeException(
+                    message: 'Der REWE-Warenkorb antwortete mit HTTP ' . $basketResponse->status . '.'
+                );
+            }
+            $basket = $this->parseBasket(html: $basketResponse->body);
+        }
+        if (!$basket['logged_in']) {
             throw new RuntimeException(
-                message: 'Es wurde kein angemeldeter REWE-Warenkorb gefunden. Exportiere einen aktuellen Chrome-Cookie.'
+                message: 'Die REWE-Sitzung konnte nicht erneuert werden. Exportiere rewe-shop.json und rewe-account.json erneut.'
             );
+        }
+        if ($basket['listing_ids'] !== [] && $basket['id'] === '') {
+            throw new RuntimeException(message: 'Der bestehende REWE-Warenkorb konnte nicht gelesen werden.');
         }
         $totalSteps = 1 + count(value: $basket['listing_ids']) + count(value: $items);
         $currentStep = 1;
@@ -222,7 +235,7 @@ final class ReweClient
         return array_slice(array: $products, offset: 0, length: 5);
     }
 
-    /** @return array{id: string, listing_ids: list<string>} */
+    /** @return array{id: string, listing_ids: list<string>, logged_in: bool} */
     public function parseBasket(string $html): array
     {
         $basketId = '';
@@ -248,7 +261,8 @@ final class ReweClient
                 $listingIds = array_values(array: array_map(callback: 'strval', array: array_keys(array: $lookup)));
             }
         }
-        return ['id' => $basketId, 'listing_ids' => $listingIds];
+        $loggedIn = preg_match(pattern: '~(?:&quot;|")isLoggedIn(?:&quot;|")\s*:\s*true~i', subject: $html) === 1;
+        return ['id' => $basketId, 'listing_ids' => $listingIds, 'logged_in' => $loggedIn];
     }
 
     private function productScore(string $query, string $productName, bool $discount): int
@@ -315,43 +329,52 @@ final class ReweClient
         if ($cookieHeader === '') {
             throw new RuntimeException(message: 'Keine gültigen REWE-Cookies gefunden in ' . $this->cookieFile . '.');
         }
-        $jarFile = $this->cookieFile . '.jar';
-        if (
-            is_file(filename: $jarFile) &&
-            (int) filemtime(filename: $jarFile) >= (int) filemtime(filename: $this->cookieFile)
-        ) {
+        $jarFile = dirname(path: $this->cookieFile, levels: 2) . '/rewe.json.jar';
+        $exportFiles = $this->cookieExportFiles();
+        $latestExportTime = max(
+            array_map(callback: fn(string $file): int => (int) filemtime(filename: $file), array: $exportFiles)
+        );
+        if (is_file(filename: $jarFile) && (int) filemtime(filename: $jarFile) >= $latestExportTime) {
             return $jarFile;
         }
-        $cookies = json_decode(json: (string) file_get_contents(filename: $this->cookieFile), associative: true);
-        $lines = ['# Netscape HTTP Cookie File'];
-        foreach (is_array(value: $cookies) ? $cookies : [] as $cookie) {
-            if (!is_array(value: $cookie)) {
-                continue;
+        $cookieLines = [];
+        foreach ($exportFiles as $exportFile) {
+            $cookies = json_decode(json: (string) file_get_contents(filename: $exportFile), associative: true);
+            if (!is_array(value: $cookies)) {
+                throw new RuntimeException(message: 'Die REWE-Cookie-Datei ist ungültig: ' . $exportFile . '.');
             }
-            $name = (string) ($cookie['name'] ?? '');
-            $value = (string) ($cookie['value'] ?? '');
-            $domain = strtolower(string: (string) ($cookie['domain'] ?? ''));
-            if (
-                $name === '' ||
-                $domain === '' ||
-                !str_ends_with(haystack: ltrim(string: $domain, characters: '.'), needle: 'rewe.de') ||
-                preg_match(pattern: '~[\t\r\n]~', subject: $name . $value) === 1
-            ) {
-                continue;
+            foreach ($cookies as $cookie) {
+                if (!is_array(value: $cookie)) {
+                    continue;
+                }
+                $name = (string) ($cookie['name'] ?? '');
+                $value = (string) ($cookie['value'] ?? '');
+                $domain = strtolower(string: (string) ($cookie['domain'] ?? ''));
+                $path = (string) ($cookie['path'] ?? '/');
+                if (
+                    $name === '' ||
+                    $domain === '' ||
+                    !str_ends_with(haystack: ltrim(string: $domain, characters: '.'), needle: 'rewe.de') ||
+                    preg_match(pattern: '~[\t\r\n]~', subject: $name . $value) === 1
+                ) {
+                    continue;
+                }
+                $jarDomain = (($cookie['httpOnly'] ?? false) === true ? '#HttpOnly_' : '') . $domain;
+                $cookieLines[$domain . "\t" . $path . "\t" . $name] = implode(
+                    separator: "\t",
+                    array: [
+                        $jarDomain,
+                        str_starts_with(haystack: $domain, needle: '.') ? 'TRUE' : 'FALSE',
+                        $path,
+                        ($cookie['secure'] ?? false) === true ? 'TRUE' : 'FALSE',
+                        (string) (int) ($cookie['expirationDate'] ?? ($cookie['expires'] ?? 0)),
+                        $name,
+                        $value
+                    ]
+                );
             }
-            $lines[] = implode(
-                separator: "\t",
-                array: [
-                    $domain,
-                    str_starts_with(haystack: $domain, needle: '.') ? 'TRUE' : 'FALSE',
-                    (string) ($cookie['path'] ?? '/'),
-                    ($cookie['secure'] ?? false) === true ? 'TRUE' : 'FALSE',
-                    (string) (int) ($cookie['expirationDate'] ?? ($cookie['expires'] ?? 0)),
-                    $name,
-                    $value
-                ]
-            );
         }
+        $lines = array_merge(['# Netscape HTTP Cookie File'], array_values(array: $cookieLines));
         $temporaryFile = $jarFile . '.' . bin2hex(string: random_bytes(length: 8));
         file_put_contents(filename: $temporaryFile, data: implode(separator: "\n", array: $lines) . "\n");
         chmod(filename: $temporaryFile, permissions: 0600);
@@ -366,49 +389,60 @@ final class ReweClient
                 message: 'Die REWE-Cookie-Datei wurde nicht gefunden: ' . $this->cookieFile . '.'
             );
         }
-        $contents = (string) file_get_contents(filename: $this->cookieFile);
-        if (trim(string: $contents) === '') {
-            throw new RuntimeException(message: 'Die REWE-Cookie-Datei ist leer: ' . $this->cookieFile . '.');
-        }
-        $cookies = json_decode(json: $contents, associative: true);
-        if (!is_array(value: $cookies)) {
-            throw new RuntimeException(
-                message: 'Die REWE-Cookie-Datei enthält kein gültiges Cookie-Editor-JSON: ' . $this->cookieFile . '.'
-            );
-        }
         $host = strtolower(string: (string) parse_url(url: $targetUrl, component: PHP_URL_HOST));
         $path = (string) (parse_url(url: $targetUrl, component: PHP_URL_PATH) ?: '/');
         $values = [];
-        foreach ($cookies as $cookie) {
-            if (!is_array(value: $cookie)) {
-                continue;
+        foreach ($this->cookieExportFiles() as $exportFile) {
+            $contents = (string) file_get_contents(filename: $exportFile);
+            $cookies = json_decode(json: $contents, associative: true);
+            if (!is_array(value: $cookies)) {
+                throw new RuntimeException(message: 'Die REWE-Cookie-Datei ist ungültig: ' . $exportFile . '.');
             }
-            $name = (string) ($cookie['name'] ?? '');
-            $value = (string) ($cookie['value'] ?? '');
-            $domain = ltrim(string: strtolower(string: (string) ($cookie['domain'] ?? '')), characters: '.');
-            $cookiePath = (string) ($cookie['path'] ?? '/');
-            $expires = (int) ($cookie['expirationDate'] ?? ($cookie['expires'] ?? 0));
-            $domainMatches =
-                $domain === '' || $host === $domain || str_ends_with(haystack: $host, needle: '.' . $domain);
-            if ($name === '' || preg_match(pattern: '/^[!#$%&\'*+.^_`|~0-9A-Za-z-]+$/', subject: $name) !== 1) {
-                continue;
+            foreach ($cookies as $cookie) {
+                if (!is_array(value: $cookie)) {
+                    continue;
+                }
+                $name = (string) ($cookie['name'] ?? '');
+                $value = (string) ($cookie['value'] ?? '');
+                $domain = ltrim(string: strtolower(string: (string) ($cookie['domain'] ?? '')), characters: '.');
+                $cookiePath = (string) ($cookie['path'] ?? '/');
+                $expires = (int) ($cookie['expirationDate'] ?? ($cookie['expires'] ?? 0));
+                $domainMatches =
+                    $domain === '' || $host === $domain || str_ends_with(haystack: $host, needle: '.' . $domain);
+                if ($name === '' || preg_match(pattern: '/^[!#$%&\'*+.^_`|~0-9A-Za-z-]+$/', subject: $name) !== 1) {
+                    continue;
+                }
+                if (
+                    !$domainMatches ||
+                    !str_starts_with(haystack: $path, needle: $cookiePath) ||
+                    ($expires > 0 && $expires < time())
+                ) {
+                    continue;
+                }
+                if (
+                    str_contains(haystack: $value, needle: ';') ||
+                    preg_match(pattern: '~[\r\n]~', subject: $value) === 1
+                ) {
+                    continue;
+                }
+                $values[$name] = $value;
             }
-            if (
-                !$domainMatches ||
-                !str_starts_with(haystack: $path, needle: $cookiePath) ||
-                ($expires > 0 && $expires < time())
-            ) {
-                continue;
-            }
-            if (str_contains(haystack: $value, needle: ';') || preg_match(pattern: '~[\r\n]~', subject: $value) === 1) {
-                continue;
-            }
-            $values[$name] = $value;
         }
         $headerValues = [];
         foreach ($values as $name => $value) {
             $headerValues[] = $name . '=' . $value;
         }
         return implode(separator: '; ', array: $headerValues);
+    }
+
+    /** @return list<string> */
+    private function cookieExportFiles(): array
+    {
+        $files = [$this->cookieFile];
+        $accountFile = dirname(path: $this->cookieFile) . '/rewe-account.json';
+        if ($accountFile !== $this->cookieFile && is_file(filename: $accountFile)) {
+            $files[] = $accountFile;
+        }
+        return $files;
     }
 }

@@ -1,6 +1,6 @@
 {
     "name": "mampf",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "private": true,
     "type": "module",
     "scripts": {
@@ -8,7 +8,8 @@
         "prod": "vite build"
     },
     "dependencies": {
-        "lucide": "^1.24.0"
+        "lucide": "^1.24.0",
+        "sweetalert2": "^11.26.25"
     },
     "devDependencies": {
         "@prettier/plugin-php": ">=0.25",
