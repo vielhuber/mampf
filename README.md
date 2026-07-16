@@ -1,4 +1,4 @@
-# 🥗mampf🥗
+# 🥗 mampf 🥗
 
 recipe planning with hellofresh import, rewe ingredient matching and weekly basket creation.
 
@@ -19,7 +19,4 @@ chmod +x .bin/curl-impersonate
 php _public/auth/index.php create "mail@example.org" "password"
 ```
 
-point a virtual host document root to `_public`.
-
-login at [https://www.rewe.de/shop](https://www.rewe.de/shop) and export all current chrome cookies as a cookie-editor json array to `.data/cookies/rewe.json`.
-.
+point a virtual host document root to `_public`. login at [https://www.rewe.de/shop](https://www.rewe.de/shop) and export all current chrome cookies as a cookie-editor json array to `.data/cookies/rewe.json`.
