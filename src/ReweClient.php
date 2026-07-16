@@ -15,6 +15,9 @@ final class ReweClient
     private const BASKET_URL = self::BASE_URL . '/shop/checkout/basket';
     private const CACHE_TTL_SECONDS = 60 * 60 * 6;
 
+    /** @var array<string, list<array<string, mixed>>> */
+    private array $productsByIngredient = [];
+
     public function __construct(
         private readonly Database $database,
         private readonly HttpClient $httpClient,
@@ -27,12 +30,18 @@ final class ReweClient
     }
 
     /** @return list<array<string, mixed>> */
-    public function productsForIngredient(string $name): array
+    public function productsForIngredient(string $name, bool $refresh = false): array
     {
         $key = $this->normalize(value: $name);
-        $cached = $this->database->ingredientMapping(key: $key, maxAgeSeconds: self::CACHE_TTL_SECONDS);
-        if ($cached !== null) {
-            return $cached;
+        if (array_key_exists(key: $key, array: $this->productsByIngredient)) {
+            return $this->productsByIngredient[$key];
+        }
+        if (!$refresh) {
+            $cached = $this->database->ingredientMapping(key: $key, maxAgeSeconds: self::CACHE_TTL_SECONDS);
+            if ($cached !== null) {
+                $this->productsByIngredient[$key] = $cached;
+                return $cached;
+            }
         }
         usleep(microseconds: 500000);
         $response = $this->request(url: $this->searchUrl(query: $name));
@@ -43,6 +52,7 @@ final class ReweClient
         }
         $products = $this->parseProducts(html: $response->body, query: $name);
         $this->database->saveIngredientMapping(key: $key, query: $name, products: $products);
+        $this->productsByIngredient[$key] = $products;
         return $products;
     }
 
@@ -61,15 +71,34 @@ final class ReweClient
         $missing = [];
         foreach ($recipes as $recipe) {
             $ingredients = json_decode(json: (string) ($recipe['ingredients_json'] ?? ''), associative: true);
-            if (!is_array(value: $ingredients)) {
+            if (!is_array(value: $ingredients) || $ingredients === []) {
                 $missing[] = (string) $recipe['name'] . ': Zutaten nicht importiert';
                 continue;
             }
-            foreach ($ingredients as $ingredient) {
-                $selected = is_array(value: $ingredient) ? $ingredient['selected'] ?? null : null;
+            foreach ($ingredients as &$ingredient) {
+                if (!is_array(value: $ingredient)) {
+                    continue;
+                }
+                $name = trim(string: (string) ($ingredient['name'] ?? ''));
+                if ($name === '') {
+                    $missing[] = (string) $recipe['name'] . ': unbekannte Zutat';
+                    continue;
+                }
+                $previousListingId = trim(string: (string) ($ingredient['selected']['listing_id'] ?? ''));
+                $products = $this->productsForIngredient(name: $name, refresh: true);
+                $ingredient['search_url'] = $this->searchUrl(query: $name);
+                $ingredient['products'] = $products;
+                $ingredient['selected'] = $products[0] ?? null;
+                foreach ($products as $product) {
+                    if ((string) ($product['listing_id'] ?? '') === $previousListingId) {
+                        $ingredient['selected'] = $product;
+                        break;
+                    }
+                }
+                $selected = is_array(value: $ingredient['selected']) ? $ingredient['selected'] : null;
                 $listingId = is_array(value: $selected) ? trim(string: (string) ($selected['listing_id'] ?? '')) : '';
                 if ($listingId === '') {
-                    $missing[] = (string) $recipe['name'] . ': ' . (string) ($ingredient['name'] ?? 'unbekannte Zutat');
+                    $missing[] = (string) $recipe['name'] . ': ' . $name;
                     continue;
                 }
                 if (!isset($items[$listingId])) {
@@ -82,6 +111,8 @@ final class ReweClient
                 }
                 $items[$listingId]['quantity']++;
             }
+            unset($ingredient);
+            $this->database->updateIngredients(recipeId: (int) $recipe['id'], ingredients: $ingredients);
         }
         if ($missing !== []) {
             throw new RuntimeException(
@@ -155,7 +186,10 @@ final class ReweClient
             );
             if (!in_array(needle: $response->status, haystack: [200, 201, 204], strict: true)) {
                 throw new RuntimeException(
-                    message: $item['name'] . ' konnte nicht zum REWE-Warenkorb hinzugefügt werden.'
+                    message: $item['name'] .
+                        ' konnte nicht zum REWE-Warenkorb hinzugefügt werden (HTTP ' .
+                        $response->status .
+                        ').'
                 );
             }
             $currentStep++;

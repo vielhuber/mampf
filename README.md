@@ -2,7 +2,7 @@
 
 recipe planning with hellofresh import, rewe ingredient matching and weekly basket creation.
 
-![mampf](screenshot.png)
+<img src="screenshot.png" alt="mampf">
 
 ## installation
 
@@ -21,11 +21,7 @@ chmod +x .bin/curl-impersonate
 php _public/auth/index.php create "mail@example.org" "password"
 ```
 
-point a virtual host document root to `_public`.
+point a virtual host document root to `_public`. sign into rewe and export the cookies with cookie-editor as json:
 
-for a persistent rewe login, sign in once and export the cookies with cookie-editor as json:
-
-1. [rewe shop](https://www.rewe.de/shop) to `.data/cookies/rewe-shop.json`
-2. [rewe account](https://account.rewe.de/realms/sso/account/) to `.data/cookies/rewe-account.json`
-
-mampf combines both exports in a local cookie jar and renews the short-lived shop token automatically.
+- [https://www.rewe.de/shop](https://www.rewe.de/shop) to `.data/cookies/rewe-shop.json`
+- [https://account.rewe.de/realms/sso/account](https://account.rewe.de/realms/sso/account) to `.data/cookies/rewe-account.json`
