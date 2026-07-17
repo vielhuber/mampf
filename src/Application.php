@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Mampf;
 
 use DateTimeImmutable;
+use DateTimeZone;
 use JsonException;
 use PDOException;
 use RuntimeException;
@@ -198,6 +199,7 @@ final class Application
                     );
                 }
             );
+            $this->runtime->database->recordSyncRun(type: Database::SYNC_RECIPES);
             $appendLog(
                 'INFO',
                 sprintf(
@@ -228,6 +230,7 @@ final class Application
                     $appendLog('INFO', sprintf('Zutaten: %d/%d Rezepte verarbeitet.', $current, $total));
                 }
             );
+            $this->runtime->database->recordSyncRun(type: Database::SYNC_INGREDIENTS);
             if ($ingredients['errors'] !== []) {
                 foreach ($ingredients['errors'] as $error) {
                     $appendLog('ERROR', $error);
@@ -493,6 +496,7 @@ final class Application
                         $this->ensureTaskIsActive(taskId: $taskId);
                     }
                 );
+                $this->runtime->database->recordSyncRun(type: Database::SYNC_RECIPES);
                 $message = sprintf(
                     'HelloFresh aktualisiert: %d neue, %d vorhandene, %d ausgefilterte und %d nicht aufgelöste Rezepte.',
                     $result['created'],
@@ -517,6 +521,7 @@ final class Application
                         $this->ensureTaskIsActive(taskId: $taskId);
                     }
                 );
+                $this->runtime->database->recordSyncRun(type: Database::SYNC_INGREDIENTS);
                 $message = sprintf(
                     '%d Rezepte zugeordnet, %d fehlgeschlagen.',
                     $result['processed'],
@@ -798,6 +803,9 @@ final class Application
     ): never {
         $assets = $this->assets();
         $csrf = $this->escape(value: $this->csrfToken());
+        $syncRunTimes = $this->runtime->database->syncRunTimes();
+        $recipesRunTime = $this->formatSyncRunTime(timestamp: $syncRunTimes[Database::SYNC_RECIPES]);
+        $ingredientsRunTime = $this->formatSyncRunTime(timestamp: $syncRunTimes[Database::SYNC_INGREDIENTS]);
         $searchValue = $this->escape(value: $search);
         $filterFields =
             '<input type="hidden" name="search" value="' .
@@ -1146,12 +1154,15 @@ final class Application
                         <a href="/" class="flex items-center gap-3 justify-self-start"><span class="grid size-9 place-items-center rounded-md bg-emerald-700 text-white"><i data-lucide="utensils" class="size-5"></i></span><span class="hidden text-lg font-semibold sm:inline">mampf</span></a>
                         <nav aria-label="Kalenderwoche auswählen" class="mx-auto hidden max-w-full gap-1.5 overflow-x-auto px-1 py-1 lg:flex">{$weekTiles}</nav>
                         <label class="relative mx-auto block w-full max-w-44 lg:hidden"><i data-lucide="calendar-days" class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-stone-500"></i><select data-week-select aria-label="Kalenderwoche auswählen" class="h-9 w-full appearance-none rounded-md border border-stone-300 bg-white py-1 pl-8 pr-7 text-xs font-medium outline-none focus:border-emerald-700">{$mobileWeekOptions}</select><i data-lucide="chevron-down" class="pointer-events-none absolute right-2 top-2.5 size-4 text-stone-500"></i></label>
-                        <div class="flex items-center justify-self-end gap-1">
-                            <form method="post" action="/task" data-confirm-title="Rezepte aktualisieren?" data-confirm="Alle HelloFresh-Rezepte, Zutaten für drei Portionen und PDF-Links werden aktualisiert." data-confirm-button="Aktualisieren"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-recipes"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Rezepte aktualisieren" aria-label="Rezepte aktualisieren" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="refresh-cw" class="size-4"></i></button></form>
-                            <form method="post" action="/task" data-confirm-title="Zutaten zuordnen?" data-confirm="Alle fehlenden und veralteten REWE-Produktzuordnungen werden geprüft und aktualisiert." data-confirm-button="Zuordnen"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-ingredients"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Zutaten zuordnen" aria-label="Zutaten zuordnen" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="scan-search" class="size-4"></i></button></form>
-                            <form method="post" data-confirm-title="Alles zurücksetzen?" data-confirm="Alle Rezepte, Zutatenzuordnungen, Bewertungen, Notizen und Bestellungen werden unwiderruflich gelöscht." data-confirm-button="SICHER LÖSCHEN" data-confirm-icon="error" data-confirm-input="DELETE"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="reset"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Alle Rezeptdaten löschen" aria-label="Alle Rezeptdaten löschen" class="grid size-8 place-items-center rounded-md border border-red-200 text-red-700 hover:bg-red-50"><i data-lucide="trash-2" class="size-4"></i></button></form>
-                            <button data-theme-toggle type="button" title="Dark Mode aktivieren" aria-label="Dark Mode aktivieren" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="moon" class="size-4"></i></button>
-                            <button data-logout type="button" title="Abmelden" aria-label="Abmelden" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="log-out" class="size-4"></i></button>
+                        <div class="grid justify-items-end gap-1 justify-self-end">
+                            <div class="flex items-center gap-1">
+                                <form method="post" action="/task" data-confirm-title="Rezepte aktualisieren?" data-confirm="Alle HelloFresh-Rezepte, Zutaten für drei Portionen und PDF-Links werden aktualisiert." data-confirm-button="Aktualisieren"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-recipes"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Rezepte aktualisieren" aria-label="Rezepte aktualisieren" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="refresh-cw" class="size-4"></i></button></form>
+                                <form method="post" action="/task" data-confirm-title="Zutaten zuordnen?" data-confirm="Alle fehlenden und veralteten REWE-Produktzuordnungen werden geprüft und aktualisiert." data-confirm-button="Zuordnen"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-ingredients"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Zutaten zuordnen" aria-label="Zutaten zuordnen" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="scan-search" class="size-4"></i></button></form>
+                                <form method="post" data-confirm-title="Alles zurücksetzen?" data-confirm="Alle Rezepte, Zutatenzuordnungen, Bewertungen, Notizen und Bestellungen werden unwiderruflich gelöscht." data-confirm-button="SICHER LÖSCHEN" data-confirm-icon="error" data-confirm-input="DELETE"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="reset"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Alle Rezeptdaten löschen" aria-label="Alle Rezeptdaten löschen" class="grid size-8 place-items-center rounded-md border border-red-200 text-red-700 hover:bg-red-50"><i data-lucide="trash-2" class="size-4"></i></button></form>
+                                <button data-theme-toggle type="button" title="Dark Mode aktivieren" aria-label="Dark Mode aktivieren" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="moon" class="size-4"></i></button>
+                                <button data-logout type="button" title="Abmelden" aria-label="Abmelden" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="log-out" class="size-4"></i></button>
+                            </div>
+                            <p class="whitespace-nowrap text-[10px] leading-3 text-stone-400" title="Letzte vollständig abgeschlossene Läufe">Rezepte: {$recipesRunTime} · Zutaten: {$ingredientsRunTime}</p>
                         </div>
                     </div>
                 </header>
@@ -1233,6 +1244,16 @@ final class Application
             return new UserIdentity(id: $userId, email: (string) ($user['login'] ?? ''));
         }
         throw new RuntimeException(message: 'Der angemeldete Benutzer konnte nicht geladen werden.');
+    }
+
+    private function formatSyncRunTime(?string $timestamp): string
+    {
+        if ($timestamp === null) {
+            return 'noch nie';
+        }
+        return (new DateTimeImmutable(datetime: $timestamp, timezone: new DateTimeZone(timezone: 'UTC')))
+            ->setTimezone(timezone: new DateTimeZone(timezone: date_default_timezone_get()))
+            ->format(format: 'd.m. H:i');
     }
 
     /** @return array{css: string, js: string} */

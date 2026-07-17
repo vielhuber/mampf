@@ -9,6 +9,9 @@ use vielhuber\dbhelper\dbhelper;
 
 final class Database
 {
+    public const SYNC_RECIPES = 'recipes';
+    public const SYNC_INGREDIENTS = 'ingredients';
+
     private dbhelper $connection;
 
     public function __construct(string $path)
@@ -70,6 +73,11 @@ final class Database
                     status TEXT NOT NULL,
                     result_json TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_runs (
+                    type TEXT PRIMARY KEY,
+                    completed_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS recipe_ratings (
@@ -401,6 +409,7 @@ final class Database
         try {
             $this->connection->query('DELETE FROM ingredient_mappings');
             $this->connection->query('DELETE FROM orders');
+            $this->connection->query('DELETE FROM sync_runs');
             $this->connection->query('DELETE FROM recipes');
             $this->connection->query("DELETE FROM sqlite_sequence WHERE name IN ('recipes', 'orders')");
             $this->connection->query('COMMIT');
@@ -412,6 +421,36 @@ final class Database
             );
         }
         return $recipeCount;
+    }
+
+    public function recordSyncRun(string $type): void
+    {
+        if (!in_array(needle: $type, haystack: [self::SYNC_RECIPES, self::SYNC_INGREDIENTS], strict: true)) {
+            throw new RuntimeException(message: 'Ungültiger Synchronisierungstyp.');
+        }
+        $this->connection->query(
+            <<<'SQL'
+                INSERT INTO sync_runs (type, completed_at)
+                VALUES (?, CURRENT_TIMESTAMP)
+                ON CONFLICT(type) DO UPDATE SET completed_at = CURRENT_TIMESTAMP
+            SQL
+            ,
+            $type
+        );
+    }
+
+    /** @return array{recipes: ?string, ingredients: ?string} */
+    public function syncRunTimes(): array
+    {
+        $times = [self::SYNC_RECIPES => null, self::SYNC_INGREDIENTS => null];
+        foreach ($this->connection->fetch_all('SELECT type, completed_at FROM sync_runs') as $run) {
+            $type = (string) $run['type'];
+            if (!array_key_exists(key: $type, array: $times)) {
+                continue;
+            }
+            $times[$type] = (string) $run['completed_at'];
+        }
+        return $times;
     }
 
     /** @return list<array<string, mixed>> */

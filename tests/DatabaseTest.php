@@ -218,12 +218,22 @@ final class DatabaseTest extends TestCase
         $database->saveNote($recipeId, '1', 'first@example.org', 'Notiz');
         $database->saveIngredientMapping('potato', 'Kartoffeln', [['listing_id' => 'product-1']]);
         $database->saveOrder(2026, 29, 'completed', ['added' => ['product-1']]);
+        $database->recordSyncRun(Database::SYNC_RECIPES);
+        $database->recordSyncRun(Database::SYNC_INGREDIENTS);
+
+        $syncRunTimes = $database->syncRunTimes();
+        $this->assertNotNull($syncRunTimes[Database::SYNC_RECIPES]);
+        $this->assertNotNull($syncRunTimes[Database::SYNC_INGREDIENTS]);
 
         $this->assertSame(1, $database->resetRecipes());
         $this->assertSame(0, $database->recipeCount('', 2026, 29));
         $this->assertSame(0, $database->weekRecipeCount(2026, 29));
         $this->assertSame(0, $database->ratingSummary($recipeId)['count']);
         $this->assertNull($database->ingredientMapping('potato'));
+        $this->assertSame(
+            [Database::SYNC_RECIPES => null, Database::SYNC_INGREDIENTS => null],
+            $database->syncRunTimes()
+        );
         unlink(filename: $path);
     }
 }
