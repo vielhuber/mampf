@@ -48,15 +48,25 @@ final class HelloFreshScraperTest extends TestCase
         $scraper = new HelloFreshScraper(database: new Database(path: $path), httpClient: new HttpClient());
         $method = new \ReflectionClass(objectOrClass: $scraper)->getMethod(name: 'categories');
         $categories = $method->invoke($scraper, [
-            'cuisines' => [['name' => 'Italienisch']],
+            'cuisines' => [['name' => 'American'], ['name' => 'Amerikanisch']],
             'tags' => [
+                [
+                    'name' => 'Vegetarisch',
+                    'displayLabel' => true,
+                    'preferences' => [
+                        'Fleisch & Gemüse',
+                        'Veggie & Fisch',
+                        'Internationale Küche',
+                        'Vegan'
+                    ]
+                ],
                 ['name' => 'Veggie', 'displayLabel' => true, 'preferences' => []],
                 ['name' => 'Family', 'displayLabel' => true, 'preferences' => ['Familienfreundlich']],
                 ['name' => 'nutri-score-c', 'displayLabel' => false, 'preferences' => []]
             ]
         ]);
 
-        $this->assertSame(['Familienfreundlich', 'Italienisch', 'Veggie'], $categories);
+        $this->assertSame(['Amerikanisch', 'Familienfreundlich', 'Vegetarisch'], $categories);
         unlink(filename: $path);
     }
 }

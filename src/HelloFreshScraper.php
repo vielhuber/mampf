@@ -14,6 +14,46 @@ final class HelloFreshScraper
     private const API_URL = 'https://www.hellofresh.de/gw/recipes/recipes';
     private const BATCH_SIZE = 250;
     private const IMAGE_URL = 'https://media.hellofresh.com/c_fit,f_auto,fl_lossy,h_400,q_80,w_800/hellofresh_s3/image/';
+    private const CATEGORY_ALIASES = [
+        'american' => 'Amerikanisch',
+        'argentinsk' => 'Argentinisch',
+        'austrian' => 'Österreichisch',
+        'belgisk' => 'Belgisch',
+        'cajunsk' => 'Cajun',
+        'calorie smart' => 'Unter 650 Kalorien',
+        'cambodian' => 'Kambodschanisch',
+        'dansk' => 'Dänisch',
+        'family' => 'Familienfreundlich',
+        'fettarm' => 'Fettarm',
+        'ghanaian' => 'Ghanaisch',
+        'high protein' => 'Proteinreich',
+        'hawaiian' => 'Hawaiianisch',
+        'israelisk' => 'Israelisch',
+        'ivorian' => 'Ivorisch',
+        'jamaicansk' => 'Jamaikanisch',
+        'kalorien im blick' => 'Unter 650 Kalorien',
+        'kanadensisk' => 'Kanadisch',
+        'latin american' => 'Lateinamerikanisch',
+        'malaysisk' => 'Malaysisch',
+        'middle eastern' => 'Nahöstlich',
+        'moroccan' => 'Marokkanisch',
+        'nedeländsk' => 'Niederländisch',
+        'nepalese' => 'Nepalesisch',
+        'north american' => 'Nordamerikanisch',
+        'palestinian' => 'Palästinensisch',
+        'peruansk' => 'Peruanisch',
+        'quick cook' => 'Zeit sparen',
+        'scharf' => 'Scharf',
+        'skandinavisk' => 'Skandinavisch',
+        'sri lankesisk' => 'Sri-lankisch',
+        'svensk' => 'Schwedisch',
+        'syrian' => 'Syrisch',
+        'ungersk' => 'Ungarisch',
+        'uzbek' => 'Usbekisch',
+        'vegetarian' => 'Vegetarisch',
+        'veggie' => 'Vegetarisch',
+        'western european' => 'Westeuropäisch'
+    ];
 
     private ?string $accessToken = null;
 
@@ -336,7 +376,7 @@ final class HelloFreshScraper
             if (!is_array(value: $cuisine)) {
                 continue;
             }
-            $name = trim(string: (string) ($cuisine['name'] ?? ''));
+            $name = $this->categoryName(name: (string) ($cuisine['name'] ?? ''));
             if ($name !== '') {
                 $categories[$name] = true;
             }
@@ -345,23 +385,20 @@ final class HelloFreshScraper
             if (!is_array(value: $tag) || ($tag['displayLabel'] ?? false) !== true) {
                 continue;
             }
-            $labels = array_filter(
-                array: $tag['preferences'] ?? [],
-                callback: fn(mixed $preference): bool => is_string(value: $preference) && trim(string: $preference) !== ''
-            );
-            if ($labels === []) {
-                $labels = [(string) ($tag['name'] ?? '')];
-            }
-            foreach ($labels as $label) {
-                $name = trim(string: (string) $label);
-                if ($name !== '') {
-                    $categories[$name] = true;
-                }
+            $name = $this->categoryName(name: (string) ($tag['name'] ?? ''));
+            if ($name !== '') {
+                $categories[$name] = true;
             }
         }
         $names = array_keys(array: $categories);
         natcasesort(array: $names);
         return array_values(array: $names);
+    }
+
+    private function categoryName(string $name): string
+    {
+        $name = trim(string: $name);
+        return self::CATEGORY_ALIASES[mb_strtolower(string: $name)] ?? $name;
     }
 
     /** @return list<string> */
