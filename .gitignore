@@ -2,9 +2,9 @@
 !/.bin/.gitkeep
 /.config/*
 !/.config/.gitkeep
+!/.config/.env.example
 /.data/*
 !/.data/.gitkeep
-/.env
 /node_modules/
 /vendor/
 /.phpunit.cache/

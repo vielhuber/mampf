@@ -11,9 +11,9 @@ mkdir mampf
 cd mampf
 git clone https://github.com/vielhuber/mampf.git .
 composer install
-cp .env.example .env
-sed -i "s/replace-with-a-long-random-value/$(php -r 'echo bin2hex(random_bytes(32));')/" .env
-sed -i "s/replace-with-a-random-cron-token/$(php -r 'echo bin2hex(random_bytes(32));')/" .env
+cp .config/.env.example .config/.env
+sed -i "s/replace-with-a-long-random-value/$(php -r 'echo bin2hex(random_bytes(32));')/" .config/.env
+sed -i "s/replace-with-a-random-cron-token/$(php -r 'echo bin2hex(random_bytes(32));')/" .config/.env
 mkdir -p .bin
 curl -fsSL https://github.com/lexiforest/curl-impersonate/releases/download/v1.5.6/curl-impersonate-v1.5.6.x86_64-linux-gnu.tar.gz | tar -xz -C .bin curl-impersonate
 chmod +x .bin/curl-impersonate

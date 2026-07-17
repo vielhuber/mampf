@@ -15,7 +15,7 @@ final class Runtime
 
     public function __construct(public readonly string $root)
     {
-        \Dotenv\Dotenv::createImmutable(paths: $root)->safeLoad();
+        \Dotenv\Dotenv::createImmutable(paths: $root . '/.config')->safeLoad();
         foreach (['DB_HOST'] as $pathVariable) {
             $path = (string) ($_SERVER[$pathVariable] ?? '');
             if ($path !== '' && !str_starts_with(haystack: $path, needle: '/')) {
@@ -34,7 +34,7 @@ final class Runtime
             cookieJarFile: $root . '/.data/rewe.json.jar'
         );
         $this->auth = new simpleauth(
-            config: $root . '/.env',
+            config: $root . '/.config/.env',
             table: 'users',
             login: 'email',
             ttl: 365,
