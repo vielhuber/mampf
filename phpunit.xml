@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<phpunit bootstrap="vendor/autoload.php" colors="true" cacheDirectory=".phpunit.cache">
+<phpunit bootstrap="vendor/autoload.php" colors="true" cacheDirectory=".data/.phpunit.cache">
     <testsuites>
         <testsuite name="mampf">
             <directory>tests</directory>

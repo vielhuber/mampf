@@ -7,6 +7,5 @@
 !/.data/.gitkeep
 /node_modules/
 /vendor/
-/.phpunit.cache/
 /composer.lock
 /package-lock.json
