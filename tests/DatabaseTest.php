@@ -142,7 +142,7 @@ final class DatabaseTest extends TestCase
         $database->assignRecipe($recipeId, 2026, 29);
     }
 
-    public function testRatingsAndNotesAreUniquePerUser(): void
+    public function testRatingsRemainPerUserAndNotesAreShared(): void
     {
         $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
         $database = new Database(path: $path);
@@ -155,16 +155,62 @@ final class DatabaseTest extends TestCase
         $database->saveNote($recipeId, '1', 'first@example.org', 'Eigene Notiz');
 
         $summary = $database->ratingSummary($recipeId);
-        $recipe = $database->recipes('', 1, 10, 2026, 29, userId: '1')[0];
+        $firstUserRecipe = $database->recipes('', 1, 10, 2026, 29, userId: '1')[0];
+        $secondUserRecipe = $database->recipes('', 1, 10, 2026, 29, userId: '2')[0];
         $this->assertSame(2, $summary['count']);
         $this->assertSame(4.5, $summary['average']);
-        $this->assertSame(5, (int) $recipe['personal_rating']);
-        $this->assertSame('Eigene Notiz', $recipe['personal_note']);
-        $this->assertSame(2, (int) $recipe['community_ratings_count']);
+        $this->assertSame(5, (int) $firstUserRecipe['personal_rating']);
+        $this->assertSame(4, (int) $secondUserRecipe['personal_rating']);
+        $this->assertSame('Eigene Notiz', $firstUserRecipe['global_note']);
+        $this->assertSame('Eigene Notiz', $secondUserRecipe['global_note']);
+        $this->assertSame(2, (int) $firstUserRecipe['community_ratings_count']);
+
+        $database->saveNote($recipeId, '2', 'second@example.org', 'Gemeinsame Notiz');
+        $firstUserRecipe = $database->recipes('', 1, 10, 2026, 29, userId: '1')[0];
+        $this->assertSame('Gemeinsame Notiz', $firstUserRecipe['global_note']);
 
         $database->saveNote($recipeId, '1', 'first@example.org', '');
-        $recipe = $database->recipes('', 1, 10, 2026, 29, userId: '1')[0];
-        $this->assertSame('', $recipe['personal_note']);
+        $secondUserRecipe = $database->recipes('', 1, 10, 2026, 29, userId: '2')[0];
+        $this->assertSame('', $secondUserRecipe['global_note']);
+        unlink(filename: $path);
+    }
+
+    public function testLatestExistingUserNoteIsMigratedToSharedNote(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $database = new Database(path: $path);
+        $database->upsertRecipe('abc', 'First', 'image', 'https://example.org/abc', null);
+        unset($database);
+
+        $connection = new \PDO(dsn: 'sqlite:' . $path);
+        $connection->exec('DROP TABLE recipe_notes');
+        $connection->exec(
+            <<<'SQL'
+                CREATE TABLE recipe_notes (
+                    recipe_id INTEGER NOT NULL,
+                    user_id TEXT NOT NULL,
+                    user_email TEXT NOT NULL,
+                    note TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (recipe_id, user_id)
+                )
+            SQL
+        );
+        $connection->exec(
+            <<<'SQL'
+                INSERT INTO recipe_notes VALUES
+                    (1, '1', 'first@example.org', 'Ältere Notiz', '2026-01-01 10:00:00', '2026-01-01 10:00:00'),
+                    (1, '2', 'second@example.org', 'Neuere Notiz', '2026-01-02 10:00:00', '2026-01-02 10:00:00')
+            SQL
+        );
+        unset($connection);
+
+        $database = new Database(path: $path);
+        $firstUserRecipe = $database->recipes('', 1, 10, 2026, 29, userId: '1')[0];
+        $secondUserRecipe = $database->recipes('', 1, 10, 2026, 29, userId: '2')[0];
+        $this->assertSame('Neuere Notiz', $firstUserRecipe['global_note']);
+        $this->assertSame('Neuere Notiz', $secondUserRecipe['global_note']);
         unlink(filename: $path);
     }
 

@@ -869,7 +869,7 @@ final class Application
                     ? number_format(num: (float) $recipe['average_rating'], decimals: 1, decimal_separator: ',')
                     : '–';
             $personalRating = (int) $recipe['personal_rating'];
-            $personalNote = (string) $recipe['personal_note'];
+            $note = (string) $recipe['global_note'];
             $communityRatings = json_decode(json: (string) $recipe['community_ratings_json'], associative: true);
             $communityRatings = is_array(value: $communityRatings) ? $communityRatings : [];
             $ratingSummary = [
@@ -892,12 +892,12 @@ final class Application
                     '"></i></button>';
             }
             $noteStyle =
-                $personalNote === ''
+                $note === ''
                     ? 'text-stone-400 hover:text-stone-700'
                     : 'text-emerald-700 hover:text-emerald-900';
-            $noteTitle = $personalNote === '' ? 'Notiz hinzufügen' : 'Notiz bearbeiten';
+            $noteTitle = $note === '' ? 'Notiz hinzufügen' : 'Notiz bearbeiten';
             $ratingSummaryHtml = $this->ratingSummaryHtml(summary: $ratingSummary);
-            $personalNoteHtml = $this->escape(value: $personalNote);
+            $noteHtml = $this->escape(value: $note);
             $status =
                 '<span class="inline-flex items-center gap-1 text-xs text-stone-500"><i data-lucide="circle-dashed" class="size-3.5"></i>Noch nicht zugeordnet</span>';
             if ($ingredientsKnown) {
@@ -987,7 +987,7 @@ final class Application
                             <div class="flex items-center gap-2">
                                 <span data-rating-summary>{$ratingSummaryHtml}</span>
                                 <button type="button" data-note-button title="{$noteTitle}" aria-label="{$noteTitle}" class="grid size-6 place-items-center {$noteStyle}"><i data-lucide="notebook-pen" class="size-4"></i></button>
-                                <template data-note-template>{$personalNoteHtml}</template>
+                                <template data-note-template>{$noteHtml}</template>
                             </div>
                         </div>
                         <form method="post" class="mt-4">
@@ -1021,9 +1021,9 @@ final class Application
                     '" class="flex h-16 items-center justify-center text-stone-400" aria-label="Weitere Rezepte laden"><i data-lucide="loader-circle" class="size-5 animate-spin"></i></div>'
                 : '';
         $ingredientOptions =
-            $this->option(value: 'mapped', label: 'Vollständig zugeordnet', selected: $ingredientFilter) .
-            $this->option(value: 'all', label: 'Alle', selected: $ingredientFilter) .
-            $this->option(value: 'unmapped', label: 'Unvollständig zugeordnet', selected: $ingredientFilter);
+            $this->option(value: 'mapped', label: 'Zutaten zugeordnet', selected: $ingredientFilter) .
+            $this->option(value: 'unmapped', label: 'Zutaten unvollständig', selected: $ingredientFilter) .
+            $this->option(value: 'all', label: 'Alle Rezepte anzeigen', selected: $ingredientFilter);
         $weekOptions =
             $this->option(value: 'all', label: 'Alle Rezepte', selected: $weekFilter) .
             $this->option(value: 'selected', label: 'In dieser Woche', selected: $weekFilter) .
@@ -1190,7 +1190,7 @@ final class Application
                 <div data-hover-popover data-ingredients-popover role="tooltip" class="fixed z-50 hidden max-h-[min(28rem,calc(100vh-1rem))] w-[min(38rem,calc(100vw-1rem))] overflow-y-auto rounded-lg border border-stone-200 bg-white shadow-xl"></div>
                 <dialog data-note-dialog class="m-auto w-[min(32rem,calc(100vw-2rem))] rounded-lg border border-stone-200 bg-white p-0 text-stone-950 shadow-xl backdrop:bg-stone-950/30">
                     <form data-note-form class="p-5">
-                        <div class="flex items-start justify-between gap-4"><div><p class="text-xs font-medium uppercase text-emerald-700">Eigene Notiz</p><h2 data-note-title class="mt-0.5 font-semibold"></h2></div><button type="button" data-note-close title="Schließen" aria-label="Schließen" class="grid size-8 shrink-0 place-items-center rounded-md text-stone-500 hover:bg-stone-100"><i data-lucide="x" class="size-4"></i></button></div>
+                        <div class="flex items-start justify-between gap-4"><div><p class="text-xs font-medium uppercase text-emerald-700">Notiz</p><h2 data-note-title class="mt-0.5 font-semibold"></h2></div><button type="button" data-note-close title="Schließen" aria-label="Schließen" class="grid size-8 shrink-0 place-items-center rounded-md text-stone-500 hover:bg-stone-100"><i data-lucide="x" class="size-4"></i></button></div>
                         <input type="hidden" name="recipe_id" value="">
                         <textarea name="note" rows="7" maxlength="5000" aria-label="Notiz" class="mt-4 w-full resize-y rounded-md border border-stone-300 px-3 py-2 text-sm outline-none focus:border-emerald-700"></textarea>
                         <p data-note-error class="mt-2 hidden text-sm text-red-700"></p>

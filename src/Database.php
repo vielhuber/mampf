@@ -92,13 +92,12 @@ final class Database
                 );
 
                 CREATE TABLE IF NOT EXISTS recipe_notes (
-                    recipe_id INTEGER NOT NULL,
+                    recipe_id INTEGER PRIMARY KEY,
                     user_id TEXT NOT NULL,
                     user_email TEXT NOT NULL,
                     note TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (recipe_id, user_id),
                     FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
                 );
 
@@ -111,6 +110,49 @@ final class Database
             array: $this->connection->fetch_all('PRAGMA table_info(recipes)'),
             column_key: 'name'
         );
+        $noteColumns = $this->connection->fetch_all('PRAGMA table_info(recipe_notes)');
+        $noteUserIdIsPrimary = false;
+        foreach ($noteColumns as $noteColumn) {
+            if ((string) $noteColumn['name'] === 'user_id' && (int) $noteColumn['pk'] > 0) {
+                $noteUserIdIsPrimary = true;
+                break;
+            }
+        }
+        if ($noteUserIdIsPrimary) {
+            $this->connection->query('BEGIN IMMEDIATE');
+            try {
+                $this->connection->query('DROP TABLE IF EXISTS recipe_notes_global');
+                $this->connection->query(
+                    <<<'SQL'
+                        CREATE TABLE recipe_notes_global (
+                            recipe_id INTEGER PRIMARY KEY,
+                            user_id TEXT NOT NULL,
+                            user_email TEXT NOT NULL,
+                            note TEXT NOT NULL,
+                            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+                        )
+                    SQL
+                );
+                $this->connection->query(
+                    <<<'SQL'
+                        INSERT OR REPLACE INTO recipe_notes_global (
+                            recipe_id, user_id, user_email, note, created_at, updated_at
+                        )
+                        SELECT recipe_id, user_id, user_email, note, created_at, updated_at
+                        FROM recipe_notes
+                        ORDER BY updated_at ASC, rowid ASC
+                    SQL
+                );
+                $this->connection->query('DROP TABLE recipe_notes');
+                $this->connection->query('ALTER TABLE recipe_notes_global RENAME TO recipe_notes');
+                $this->connection->query('COMMIT');
+            } catch (PDOException $exception) {
+                $this->connection->query('ROLLBACK');
+                throw new RuntimeException(message: 'Die Notizen konnten nicht migriert werden.', previous: $exception);
+            }
+        }
         $requiresIngredientCountBackfill =
             !in_array(needle: 'ingredient_count', haystack: $recipeColumns, strict: true) ||
             !in_array(needle: 'mapped_ingredient_count', haystack: $recipeColumns, strict: true);
@@ -263,8 +305,8 @@ final class Database
                        ), 0) AS personal_rating,
                        COALESCE((
                            SELECT note FROM recipe_notes
-                           WHERE recipe_id = recipes.id AND user_id = ?
-                       ), '') AS personal_note,
+                           WHERE recipe_id = recipes.id
+                       ), '') AS global_note,
                        COALESCE((
                            SELECT AVG(rating) FROM recipe_ratings WHERE recipe_id = recipes.id
                        ), 0) AS community_average_rating,
@@ -285,7 +327,6 @@ final class Database
                 LIMIT ? OFFSET ?
             SQL
             ,
-            $userId,
             $userId,
             $year,
             $week,
@@ -574,18 +615,15 @@ final class Database
     public function saveNote(int $recipeId, string $userId, string $userEmail, string $note): void
     {
         if ($note === '') {
-            $this->connection->query(
-                'DELETE FROM recipe_notes WHERE recipe_id = ? AND user_id = ?',
-                $recipeId,
-                $userId
-            );
+            $this->connection->query('DELETE FROM recipe_notes WHERE recipe_id = ?', $recipeId);
             return;
         }
         $this->connection->query(
             <<<'SQL'
                 INSERT INTO recipe_notes (recipe_id, user_id, user_email, note)
                 VALUES (?, ?, ?, ?)
-                ON CONFLICT(recipe_id, user_id) DO UPDATE SET
+                ON CONFLICT(recipe_id) DO UPDATE SET
+                    user_id = excluded.user_id,
                     user_email = excluded.user_email,
                     note = excluded.note,
                     updated_at = CURRENT_TIMESTAMP
