@@ -638,7 +638,7 @@ final class Application
             <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
-                <title>mampf · Anmelden</title>
+                <title>mampf // Anmelden</title>
                 <script>document.documentElement.classList.toggle('dark', localStorage.getItem('mampf-theme') === 'dark');</script>
                 <link rel="manifest" href="/manifest.webmanifest">
                 <meta name="theme-color" content="#047857">
@@ -713,7 +713,7 @@ final class Application
             <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
-                <title>mampf · {$title}</title>
+                <title>mampf // {$title}</title>
                 <script>document.documentElement.classList.toggle('dark', localStorage.getItem('mampf-theme') === 'dark');</script>
                 <link rel="manifest" href="/manifest.webmanifest">
                 <meta name="theme-color" content="#047857">
@@ -962,8 +962,8 @@ final class Application
             $buttonText = $selected ? 'Entfernen' : 'Hinzufügen';
             $buttonIcon = $selected ? 'minus' : 'plus';
             $buttonStyle = $selected
-                ? 'border-stone-300 bg-white text-stone-700 hover:bg-stone-50'
-                : 'border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800';
+                ? 'border-emerald-700 bg-emerald-700 text-white hover:bg-emerald-800'
+                : 'border-stone-300 bg-white text-stone-700 hover:bg-stone-50';
             $buttonDisabled = '';
             $buttonTitle = $buttonText;
             if (!$selected && !$ingredientsComplete) {
@@ -985,7 +985,7 @@ final class Application
                         <div class="mt-2 flex min-h-5 items-center justify-between gap-3 border-t border-stone-100 pt-2">
                             <div data-rating-picker class="flex items-center" aria-label="Eigene Bewertung">{$ratingButtons}</div>
                             <div class="flex items-center gap-2">
-                                <span data-rating-summary>{$ratingSummaryHtml}</span>
+                                <span data-rating-summary class="relative -top-px">{$ratingSummaryHtml}</span>
                                 <button type="button" data-note-button title="{$noteTitle}" aria-label="{$noteTitle}" class="grid size-6 place-items-center {$noteStyle}"><i data-lucide="notebook-pen" class="size-4"></i></button>
                                 <template data-note-template>{$noteHtml}</template>
                             </div>
@@ -1135,7 +1135,7 @@ final class Application
             <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
-                <title>mampf</title>
+                <title>mampf // KW {$week}</title>
                 <script>document.documentElement.classList.toggle('dark', localStorage.getItem('mampf-theme') === 'dark');</script>
                 <link rel="manifest" href="/manifest.webmanifest">
                 <meta name="theme-color" content="#047857">
@@ -1170,7 +1170,7 @@ final class Application
                 <main>
                     <section class="border-b border-stone-200 bg-white">
                         <div class="mx-auto grid max-w-screen-2xl gap-5 px-5 py-6 lg:grid-cols-[1fr_auto] lg:items-end">
-                            <div><p class="text-sm font-medium leading-5 text-emerald-700">Woche <span class="tabular-nums">{$week}</span> · <span class="tabular-nums">{$year}</span></p><h1 class="mt-1 text-2xl font-semibold">Wochenplan</h1><div class="mt-3 text-sm text-stone-500"><span><strong class="text-stone-900">{$total}</strong> Rezepte</span></div></div>
+                            <div><p class="text-sm font-medium leading-5 text-emerald-700">Woche <span class="tabular-nums">{$week}</span> · <span class="tabular-nums">{$year}</span></p><div class="mt-1 text-sm text-stone-500"><span><strong class="text-stone-900">{$total}</strong> Rezepte</span></div></div>
                             <div class="flex flex-wrap gap-2">
                                 <form method="post" action="/task" data-confirm-title="Woche {$week} bestellen?" data-confirm="Der aktuelle REWE-Warenkorb wird vollständig geleert und durch die Zutaten dieser Woche ersetzt." data-confirm-button="Jetzt bestellen!"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="order"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="{$orderTitle}" class="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium {$orderStyle}"{$orderDisabled}><i data-lucide="shopping-cart" class="size-4"></i>Produkte dieser Woche bestellen</button></form>
                             </div>
