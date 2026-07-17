@@ -271,8 +271,6 @@ final class HelloFreshScraper
         ?callable $checkpoint = null
     ): array {
         $processed = 0;
-        $failed = 0;
-        $errors = [];
         $recipes = $this->database->recipesForIngredientMapping(limit: $limit);
         foreach ($recipes as $recipe) {
             try {
@@ -311,20 +309,24 @@ final class HelloFreshScraper
                 }
                 unset($ingredient);
                 $processed++;
-                $progress?->__invoke((string) $recipe['name'], true, $processed + $failed, count(value: $recipes));
+                $progress?->__invoke((string) $recipe['name'], true, $processed, count(value: $recipes));
+            } catch (TaskCancelledException $exception) {
+                throw $exception;
             } catch (RuntimeException $exception) {
-                $failed++;
-                $errors[$exception->getMessage()] = $exception->getMessage();
                 $progress?->__invoke(
                     (string) $recipe['name'],
                     false,
-                    $processed + $failed,
+                    $processed + 1,
                     count(value: $recipes),
                     $exception->getMessage()
                 );
+                throw new RuntimeException(
+                    message: (string) $recipe['name'] . ': ' . $exception->getMessage(),
+                    previous: $exception
+                );
             }
         }
-        return ['processed' => $processed, 'failed' => $failed, 'errors' => array_values(array: $errors)];
+        return ['processed' => $processed, 'failed' => 0, 'errors' => []];
     }
 
     /**

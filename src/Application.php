@@ -1120,7 +1120,7 @@ final class Application
             <select name="week_filter" aria-label="Wochenstatus" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$weekOptions}</select>
             <select name="sort" aria-label="Sortierung" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$sortOptions}</select>
             <div class="flex gap-2 sm:col-span-2 lg:col-span-1">
-                <a href="/?year={$year}&amp;week={$week}" title="Filter zurücksetzen" aria-label="Filter zurücksetzen" class="grid size-9 shrink-0 place-items-center rounded-md border border-stone-300 bg-white text-stone-600 hover:bg-stone-50"><i data-lucide="rotate-ccw" class="size-4"></i></a>
+                <a href="/?year={$year}&amp;week={$week}" title="Filter zurücksetzen" aria-label="Filter zurücksetzen" class="grid size-9 shrink-0 place-items-center rounded-md border border-stone-300 bg-white text-stone-600 hover:bg-stone-50"><i data-lucide="filter-x" class="size-4"></i></a>
                 <button class="flex-1 rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-50">Filter</button>
             </div>
         HTML;

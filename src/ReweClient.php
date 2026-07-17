@@ -128,11 +128,7 @@ final class ReweClient
         }
 
         $basketResponse = $this->request(url: self::BASKET_URL);
-        if ($basketResponse->status !== 200) {
-            throw new RuntimeException(
-                message: 'Der REWE-Warenkorb antwortete mit HTTP ' . $basketResponse->status . '.'
-            );
-        }
+        $this->assertBasketResponse(response: $basketResponse);
         $basket = $this->parseBasket(html: $basketResponse->body);
         if (!$basket['logged_in']) {
             throw new RuntimeException(
@@ -374,11 +370,7 @@ final class ReweClient
             return;
         }
         $basketResponse = $this->request(url: self::BASKET_URL);
-        if ($basketResponse->status !== 200) {
-            throw new RuntimeException(
-                message: 'Der REWE-Warenkorb antwortete mit HTTP ' . $basketResponse->status . '.'
-            );
-        }
+        $this->assertBasketResponse(response: $basketResponse);
         if ($this->parseBasket(html: $basketResponse->body)['logged_in']) {
             $this->shopSessionReady = true;
             return;
@@ -412,17 +404,33 @@ final class ReweClient
         }
 
         $basketResponse = $this->request(url: self::BASKET_URL);
-        if ($basketResponse->status !== 200) {
-            throw new RuntimeException(
-                message: 'Der REWE-Warenkorb antwortete mit HTTP ' . $basketResponse->status . '.'
-            );
-        }
+        $this->assertBasketResponse(response: $basketResponse);
         if (!$this->parseBasket(html: $basketResponse->body)['logged_in']) {
             throw new RuntimeException(
                 message: 'Die REWE-Sitzung konnte nicht erneuert werden. Exportiere rewe-shop.json und rewe-account.json erneut.'
             );
         }
         $this->shopSessionReady = true;
+    }
+
+    private function assertBasketResponse(HttpResponse $response): void
+    {
+        if ($response->status === 200) {
+            return;
+        }
+        if (
+            $response->status === 403 &&
+            (str_contains(haystack: $response->body, needle: 'Zeig uns, dass du ein Mensch bist') ||
+                str_contains(haystack: $response->body, needle: '_cf_chl_opt'))
+        ) {
+            throw new RuntimeException(
+                message: 'REWE blockiert den Server mit einer Cloudflare-Menschprüfung (HTTP 403). ' .
+                    'Beende den Lauf und versuche es später erneut.'
+            );
+        }
+        throw new RuntimeException(
+            message: 'Der REWE-Warenkorb antwortete mit HTTP ' . $response->status . '.'
+        );
     }
 
     private function request(

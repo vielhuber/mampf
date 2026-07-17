@@ -5,8 +5,10 @@ namespace Mampf\Tests;
 
 use Mampf\Database;
 use Mampf\HttpClient;
+use Mampf\HttpResponse;
 use Mampf\ReweClient;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 final class ReweClientTest extends TestCase
 {
@@ -136,6 +138,22 @@ final class ReweClientTest extends TestCase
 
         $this->assertSame([], $client->productsForIngredient(name: 'Kartoffeln'));
         unlink(filename: $path);
+    }
+
+    public function testCloudflareBasketChallengeHasSpecificError(): void
+    {
+        $client = $this->client();
+        $method = new \ReflectionClass(objectOrClass: $client)->getMethod(name: 'assertBasketResponse');
+
+        $this->expectException(exception: RuntimeException::class);
+        $this->expectExceptionMessage(message: 'Cloudflare-Menschprüfung');
+        $method->invoke(
+            $client,
+            new HttpResponse(
+                status: 403,
+                body: '<h1>Zeig uns, dass du ein Mensch bist.</h1><script>window._cf_chl_opt = {};</script>'
+            )
+        );
     }
 
     private function client(?string $cookieFile = null): ReweClient
