@@ -27,17 +27,17 @@ npm install
 npm run prod
 ```
 
-rewe requests require a linux x86-64 host that permits `exec()`, custom executables and outgoing https connections.
+## auth
 
 point a virtual host document root to `public`. sign into rewe and export the cookies with cookie-editor as json:
 
 - [https://www.rewe.de/shop](https://www.rewe.de/shop) to `.config/rewe-shop.json`
 - [https://account.rewe.de/realms/sso/account](https://account.rewe.de/realms/sso/account) to `.config/rewe-account.json`
 
+## cron
+
 update recipes and rewe ingredient mappings through cron:
 
 ```bash
 curl --fail --show-error --silent "https://mampf.example.org/cron?token=YOUR_CRON_TOKEN"
 ```
-
-runs are written to `.data/cron.log`; concurrent runs are rejected. every six hours is sufficient for recipe and product updates.
