@@ -111,7 +111,8 @@ final class HelloFreshScraper
                     favoritesCount: (int) ($item['favoritesCount'] ?? 0),
                     ratingsCount: (int) ($item['ratingsCount'] ?? 0),
                     averageRating: (float) ($item['averageRating'] ?? 0),
-                    pdfUrl: $this->pdfUrl(recipe: $item)
+                    pdfUrl: $this->pdfUrl(recipe: $item),
+                    categories: $this->categories(recipe: $item)
                 );
                 $this->database->updateIngredientDefinitions(
                     sourceId: $sourceId,
@@ -191,7 +192,8 @@ final class HelloFreshScraper
                         favoritesCount: (int) ($item['favoritesCount'] ?? 0),
                         ratingsCount: (int) ($item['ratingsCount'] ?? 0),
                         averageRating: (float) ($item['averageRating'] ?? 0),
-                        pdfUrl: $this->pdfUrl(recipe: $item)
+                        pdfUrl: $this->pdfUrl(recipe: $item),
+                        categories: $this->categories(recipe: $item)
                     );
                     $this->database->updateIngredientDefinitions(
                         sourceId: $sourceId,
@@ -321,6 +323,45 @@ final class HelloFreshScraper
             ];
         }
         return $ingredients;
+    }
+
+    /**
+     * @param array<string, mixed> $recipe
+     * @return list<string>
+     */
+    private function categories(array $recipe): array
+    {
+        $categories = [];
+        foreach ($recipe['cuisines'] ?? [] as $cuisine) {
+            if (!is_array(value: $cuisine)) {
+                continue;
+            }
+            $name = trim(string: (string) ($cuisine['name'] ?? ''));
+            if ($name !== '') {
+                $categories[$name] = true;
+            }
+        }
+        foreach ($recipe['tags'] ?? [] as $tag) {
+            if (!is_array(value: $tag) || ($tag['displayLabel'] ?? false) !== true) {
+                continue;
+            }
+            $labels = array_filter(
+                array: $tag['preferences'] ?? [],
+                callback: fn(mixed $preference): bool => is_string(value: $preference) && trim(string: $preference) !== ''
+            );
+            if ($labels === []) {
+                $labels = [(string) ($tag['name'] ?? '')];
+            }
+            foreach ($labels as $label) {
+                $name = trim(string: (string) $label);
+                if ($name !== '') {
+                    $categories[$name] = true;
+                }
+            }
+        }
+        $names = array_keys(array: $categories);
+        natcasesort(array: $names);
+        return array_values(array: $names);
     }
 
     /** @return list<string> */

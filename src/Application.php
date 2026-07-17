@@ -57,26 +57,15 @@ final class Application
             'selected', 'unselected' => $weekFilterValue,
             default => 'all'
         };
+        $category = trim(string: (string) ($_GET['category'] ?? ''));
         $sortValue = (string) ($_GET['sort'] ?? 'favorites_desc');
         $sort = match ($sortValue) {
             'favorites_desc',
-            'favorites_asc',
             'ratings_desc',
-            'ratings_asc',
             'rating_desc',
-            'rating_asc',
             'name_asc',
             'name_desc',
-            'ingredients_desc',
-            'ingredients_asc',
-            'source_updated_desc',
-            'source_updated_asc',
-            'created_desc',
-            'created_asc',
-            'updated_desc',
-            'updated_asc',
-            'ingredients_updated_desc',
-            'ingredients_updated_asc'
+            'created_desc'
                 => $sortValue,
             default => 'favorites_desc'
         };
@@ -91,6 +80,7 @@ final class Application
             week: $week,
             ingredientFilter: $ingredientFilter,
             weekFilter: $weekFilter,
+            category: $category,
             sort: $sort,
             userId: $this->currentUser()->id
         );
@@ -99,7 +89,8 @@ final class Application
             year: $year,
             week: $week,
             ingredientFilter: $ingredientFilter,
-            weekFilter: $weekFilter
+            weekFilter: $weekFilter,
+            category: $category
         );
         $this->renderDashboard(
             recipes: $recipes,
@@ -110,6 +101,7 @@ final class Application
             search: $search,
             ingredientFilter: $ingredientFilter,
             weekFilter: $weekFilter,
+            category: $category,
             sort: $sort,
             page: $page,
             pages: max(1, (int) ceil(num: $count / $perPage)),
@@ -290,6 +282,7 @@ final class Application
             default => 'mapped'
         };
         $weekFilter = (string) ($_POST['week_filter'] ?? 'all');
+        $category = trim(string: (string) ($_POST['category'] ?? ''));
         $sort = (string) ($_POST['sort'] ?? 'favorites_desc');
         try {
             if ($action === 'assign') {
@@ -328,6 +321,7 @@ final class Application
                 'search' => $search,
                 'ingredients' => $ingredientFilter,
                 'week_filter' => $weekFilter,
+                'category' => $category,
                 'sort' => $sort
             ]
         );
@@ -437,6 +431,7 @@ final class Application
                             'search' => trim(string: (string) ($_POST['search'] ?? '')),
                             'ingredients' => (string) ($_POST['ingredients'] ?? 'mapped'),
                             'week_filter' => (string) ($_POST['week_filter'] ?? 'all'),
+                            'category' => trim(string: (string) ($_POST['category'] ?? '')),
                             'sort' => (string) ($_POST['sort'] ?? 'favorites_desc')
                         ]
                     )
@@ -796,6 +791,7 @@ final class Application
         string $search,
         string $ingredientFilter,
         string $weekFilter,
+        string $category,
         string $sort,
         int $page,
         int $pages,
@@ -814,6 +810,8 @@ final class Application
             $this->escape(value: $ingredientFilter) .
             '"><input type="hidden" name="week_filter" value="' .
             $this->escape(value: $weekFilter) .
+            '"><input type="hidden" name="category" value="' .
+            $this->escape(value: $category) .
             '"><input type="hidden" name="sort" value="' .
             $this->escape(value: $sort) .
             '">';
@@ -1026,8 +1024,8 @@ final class Application
             $this->option(value: 'all', label: 'Alle Rezepte anzeigen', selected: $ingredientFilter);
         $weekOptions =
             $this->option(value: 'all', label: 'Alle Rezepte', selected: $weekFilter) .
-            $this->option(value: 'selected', label: 'In dieser Woche', selected: $weekFilter) .
-            $this->option(value: 'unselected', label: 'Nicht in dieser Woche', selected: $weekFilter);
+            $this->option(value: 'selected', label: 'Ausgewählte Rezepte', selected: $weekFilter) .
+            $this->option(value: 'unselected', label: 'Nicht ausgewählte Rezepte', selected: $weekFilter);
         $weekTiles = '';
         $mobileWeekOptions = '';
         $weekCounts = $this->runtime->database->weekRecipeCounts();
@@ -1061,6 +1059,7 @@ final class Application
                         'search' => $search,
                         'ingredients' => $ingredientFilter,
                         'week_filter' => $weekFilter,
+                        'category' => $category,
                         'sort' => $sort
                     ]
                 )
@@ -1097,23 +1096,15 @@ final class Application
         }
         $sortOptions =
             $this->option(value: 'favorites_desc', label: 'Beliebteste', selected: $sort) .
-            $this->option(value: 'favorites_asc', label: 'Wenigste Favoriten', selected: $sort) .
             $this->option(value: 'ratings_desc', label: 'Meiste Bewertungen', selected: $sort) .
-            $this->option(value: 'ratings_asc', label: 'Wenigste Bewertungen', selected: $sort) .
             $this->option(value: 'rating_desc', label: 'Beste Bewertung', selected: $sort) .
-            $this->option(value: 'rating_asc', label: 'Niedrigste Bewertung', selected: $sort) .
             $this->option(value: 'name_asc', label: 'Name A–Z', selected: $sort) .
             $this->option(value: 'name_desc', label: 'Name Z–A', selected: $sort) .
-            $this->option(value: 'ingredients_desc', label: 'Meiste Zutaten', selected: $sort) .
-            $this->option(value: 'ingredients_asc', label: 'Wenigste Zutaten', selected: $sort) .
-            $this->option(value: 'source_updated_desc', label: 'Rezept zuletzt aktualisiert', selected: $sort) .
-            $this->option(value: 'source_updated_asc', label: 'Rezept zuerst aktualisiert', selected: $sort) .
-            $this->option(value: 'created_desc', label: 'Zuletzt importiert', selected: $sort) .
-            $this->option(value: 'created_asc', label: 'Zuerst importiert', selected: $sort) .
-            $this->option(value: 'updated_desc', label: 'Zuletzt geändert', selected: $sort) .
-            $this->option(value: 'updated_asc', label: 'Zuerst geändert', selected: $sort) .
-            $this->option(value: 'ingredients_updated_desc', label: 'Zutaten zuletzt aktualisiert', selected: $sort) .
-            $this->option(value: 'ingredients_updated_asc', label: 'Zutaten zuerst aktualisiert', selected: $sort);
+            $this->option(value: 'created_desc', label: 'Zuletzt importiert', selected: $sort);
+        $categoryOptions = $this->option(value: '', label: 'Alle Kategorien', selected: $category);
+        foreach ($this->runtime->database->categories() as $categoryName) {
+            $categoryOptions .= $this->option(value: $categoryName, label: $categoryName, selected: $category);
+        }
         $orderDisabled = $weekRecipeCount === 0 ? ' disabled aria-disabled="true"' : '';
         $orderTitle =
             $weekRecipeCount === 0
@@ -1124,10 +1115,11 @@ final class Application
         $filterControls = <<<HTML
             <input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">
             <label class="relative flex-1"><i data-lucide="search" class="pointer-events-none absolute left-3 top-2.5 size-4 text-stone-400"></i><input name="search" value="{$searchValue}" placeholder="Rezepte suchen" aria-label="Rezepte suchen" class="w-full rounded-md border border-stone-300 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-emerald-700"></label>
+            <select name="category" aria-label="Kategorie" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$categoryOptions}</select>
             <select name="ingredients" aria-label="Zutatenstatus" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$ingredientOptions}</select>
             <select name="week_filter" aria-label="Wochenstatus" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$weekOptions}</select>
             <select name="sort" aria-label="Sortierung" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$sortOptions}</select>
-            <button class="rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-50 sm:col-span-2 lg:col-span-1">Anwenden</button>
+            <button class="rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-50 sm:col-span-2 lg:col-span-1">Filter</button>
         HTML;
         echo <<<HTML
             <!doctype html>
@@ -1179,7 +1171,7 @@ final class Application
                     <section class="border-b border-stone-200 bg-stone-100/70">
                         <div class="mx-auto max-w-screen-2xl px-5 py-4">
                             <details class="group lg:hidden"><summary class="flex cursor-pointer list-none items-center justify-between rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium"><span class="flex items-center gap-2"><i data-lucide="sliders-horizontal" class="size-4"></i>Filter und Sortierung</span><i data-lucide="chevron-down" class="size-4 transition-transform group-open:rotate-180"></i></summary><form method="get" class="mt-3 grid gap-2">{$filterControls}</form></details>
-                            <form method="get" class="hidden gap-2 lg:grid lg:grid-cols-[minmax(15rem,1fr)_auto_auto_auto_auto]">{$filterControls}</form>
+                            <form method="get" class="hidden gap-2 lg:grid lg:grid-cols-[minmax(15rem,1fr)_auto_auto_auto_auto_auto]">{$filterControls}</form>
                         </div>
                     </section>
                     <section class="mx-auto max-w-screen-2xl px-5 py-6">

@@ -36,7 +36,8 @@ final class DatabaseTest extends TestCase
                 7,
                 3,
                 4.5,
-                'https://www.hellofresh.de/recipecards/card/updated.pdf'
+                'https://www.hellofresh.de/recipecards/card/updated.pdf',
+                ['Italienisch', 'Vegetarisch']
             )
         );
         $this->assertSame(1, $database->recipeCount(search: '', year: 2026, week: 29));
@@ -46,6 +47,7 @@ final class DatabaseTest extends TestCase
             'https://www.hellofresh.de/recipecards/card/updated.pdf',
             $database->recipes('', 1, 10, 2026, 29)[0]['pdf_url']
         );
+        $this->assertSame(['Italienisch', 'Vegetarisch'], $database->categories());
 
         unlink(filename: $path);
     }
@@ -75,8 +77,28 @@ final class DatabaseTest extends TestCase
     {
         $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
         $database = new Database(path: $path);
-        $database->upsertRecipe('a', 'Alpha', 'image', 'https://example.org/a', '2026-01-01', 1, 1, 3);
-        $database->upsertRecipe('b', 'Beta', 'image', 'https://example.org/b', '2026-02-01', 8, 4, 4.5);
+        $database->upsertRecipe(
+            'a',
+            'Alpha',
+            'image',
+            'https://example.org/a',
+            '2026-01-01',
+            1,
+            1,
+            3,
+            categories: ['Italienisch']
+        );
+        $database->upsertRecipe(
+            'b',
+            'Beta',
+            'image',
+            'https://example.org/b',
+            '2026-02-01',
+            8,
+            4,
+            4.5,
+            categories: ['Vegetarisch']
+        );
         $recipes = $database->recipes('', 1, 10, 2026, 29, sort: 'name_asc');
         $database->updateIngredients(
             recipeId: (int) $recipes[1]['id'],
@@ -110,6 +132,7 @@ final class DatabaseTest extends TestCase
         $selected = $database->recipes('', 1, 10, 2026, 29, weekFilter: 'selected');
         $sorted = $database->recipes('', 1, 10, 2026, 29, sort: 'ingredients_desc');
         $popular = $database->recipes('', 1, 10, 2026, 30);
+        $italian = $database->recipes('', 1, 10, 2026, 29, category: 'Italienisch');
         $mappingRecipes = $database->recipesForIngredientMapping();
 
         $this->assertSame('Beta', $mapped[0]['name']);
@@ -117,6 +140,7 @@ final class DatabaseTest extends TestCase
         $this->assertSame('Alpha', $selected[0]['name']);
         $this->assertSame('Alpha', $sorted[0]['name']);
         $this->assertSame('Beta', $popular[0]['name']);
+        $this->assertSame('Alpha', $italian[0]['name']);
         $this->assertSame('Alpha', $mappingRecipes[0]['name']);
         $this->assertCount(2, $mappingRecipes);
         $this->assertSame(3, $database->mappedIngredientCount('', 2026, 29));
@@ -126,6 +150,8 @@ final class DatabaseTest extends TestCase
         $this->assertSame(2, $database->recipeCount('', 2026, 29));
         $this->assertSame(1, $database->recipeCount('', 2026, 29, ingredientFilter: 'mapped'));
         $this->assertSame(1, $database->recipeCount('', 2026, 29, weekFilter: 'selected'));
+        $this->assertSame(1, $database->recipeCount('', 2026, 29, category: 'Vegetarisch'));
+        $this->assertSame(['Italienisch', 'Vegetarisch'], $database->categories());
         unlink(filename: $path);
     }
 

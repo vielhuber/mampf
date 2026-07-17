@@ -38,6 +38,7 @@ final class Database
                     image_url TEXT NOT NULL,
                     source_url TEXT NOT NULL UNIQUE,
                     pdf_url TEXT,
+                    categories_json TEXT NOT NULL DEFAULT '[]',
                     ingredients_json TEXT,
                     ingredient_count INTEGER NOT NULL DEFAULT 0,
                     mapped_ingredient_count INTEGER NOT NULL DEFAULT 0,
@@ -159,6 +160,7 @@ final class Database
         foreach (
             [
                 'pdf_url' => 'TEXT',
+                'categories_json' => "TEXT NOT NULL DEFAULT '[]'",
                 'ingredient_count' => 'INTEGER NOT NULL DEFAULT 0',
                 'mapped_ingredient_count' => 'INTEGER NOT NULL DEFAULT 0',
                 'favorites_count' => 'INTEGER NOT NULL DEFAULT 0',
@@ -195,6 +197,7 @@ final class Database
         );
     }
 
+    /** @param list<string> $categories */
     public function upsertRecipe(
         string $sourceId,
         string $name,
@@ -204,7 +207,8 @@ final class Database
         int $favoritesCount = 0,
         int $ratingsCount = 0,
         float $averageRating = 0,
-        ?string $pdfUrl = null
+        ?string $pdfUrl = null,
+        array $categories = []
     ): bool {
         $isNew = $this->connection->fetch_var('SELECT 1 FROM recipes WHERE source_id = ?', $sourceId) === null;
         $this->connection->query(
@@ -215,17 +219,19 @@ final class Database
                     image_url,
                     source_url,
                     pdf_url,
+                    categories_json,
                     source_updated_at,
                     favorites_count,
                     ratings_count,
                     average_rating
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(source_id) DO UPDATE SET
                     name = excluded.name,
                     image_url = excluded.image_url,
                     source_url = excluded.source_url,
                     pdf_url = excluded.pdf_url,
+                    categories_json = excluded.categories_json,
                     source_updated_at = excluded.source_updated_at,
                     favorites_count = excluded.favorites_count,
                     ratings_count = excluded.ratings_count,
@@ -238,6 +244,7 @@ final class Database
             $imageUrl,
             $sourceUrl,
             $pdfUrl,
+            json_encode(value: $categories, flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
             $sourceUpdatedAt,
             max(0, $favoritesCount),
             max(0, $ratingsCount),
@@ -255,6 +262,7 @@ final class Database
         int $week,
         string $ingredientFilter = 'all',
         string $weekFilter = 'all',
+        string $category = '',
         string $sort = 'favorites_desc',
         string $userId = ''
     ): array {
@@ -323,6 +331,10 @@ final class Database
                 WHERE (recipes.name LIKE ? OR recipes.source_id LIKE ? OR recipes.source_url LIKE ?)
                   AND {$ingredientCondition}
                   AND {$weekCondition}
+                  AND (? = '' OR EXISTS (
+                      SELECT 1 FROM json_each(recipes.categories_json) AS recipe_category
+                      WHERE recipe_category.value = ? COLLATE NOCASE
+                  ))
                 ORDER BY selected DESC, {$secondaryOrder}
                 LIMIT ? OFFSET ?
             SQL
@@ -333,6 +345,8 @@ final class Database
             $searchValue,
             $searchValue,
             $searchValue,
+            $category,
+            $category,
             $perPage,
             $offset
         );
@@ -343,7 +357,8 @@ final class Database
         int $year,
         int $week,
         string $ingredientFilter = 'all',
-        string $weekFilter = 'all'
+        string $weekFilter = 'all',
+        string $category = ''
     ): int {
         $ingredientCondition = match ($ingredientFilter) {
             'mapped' => '(recipes.ingredient_count > 0
@@ -369,13 +384,19 @@ final class Database
                 WHERE (recipes.name LIKE ? OR recipes.source_id LIKE ? OR recipes.source_url LIKE ?)
                   AND {$ingredientCondition}
                   AND {$weekCondition}
+                  AND (? = '' OR EXISTS (
+                      SELECT 1 FROM json_each(recipes.categories_json) AS recipe_category
+                      WHERE recipe_category.value = ? COLLATE NOCASE
+                  ))
             SQL
             ,
             $year,
             $week,
             $searchValue,
             $searchValue,
-            $searchValue
+            $searchValue,
+            $category,
+            $category
         );
     }
 
@@ -384,7 +405,8 @@ final class Database
         int $year,
         int $week,
         string $ingredientFilter = 'all',
-        string $weekFilter = 'all'
+        string $weekFilter = 'all',
+        string $category = ''
     ): int {
         $ingredientCondition = match ($ingredientFilter) {
             'mapped' => '(recipes.ingredient_count > 0
@@ -410,13 +432,35 @@ final class Database
                 WHERE (recipes.name LIKE ? OR recipes.source_id LIKE ? OR recipes.source_url LIKE ?)
                   AND {$ingredientCondition}
                   AND {$weekCondition}
+                  AND (? = '' OR EXISTS (
+                      SELECT 1 FROM json_each(recipes.categories_json) AS recipe_category
+                      WHERE recipe_category.value = ? COLLATE NOCASE
+                  ))
             SQL
             ,
             $year,
             $week,
             $searchValue,
             $searchValue,
-            $searchValue
+            $searchValue,
+            $category,
+            $category
+        );
+    }
+
+    /** @return list<string> */
+    public function categories(): array
+    {
+        return array_map(
+            callback: fn(array $category): string => (string) $category['name'],
+            array: $this->connection->fetch_all(
+                <<<'SQL'
+                    SELECT DISTINCT recipe_category.value AS name
+                    FROM recipes, json_each(recipes.categories_json) AS recipe_category
+                    WHERE recipe_category.type = 'text' AND TRIM(recipe_category.value) <> ''
+                    ORDER BY recipe_category.value COLLATE NOCASE
+                SQL
+            )
         );
     }
 
