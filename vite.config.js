@@ -3,11 +3,12 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
     plugins: [tailwindcss()],
+    publicDir: false,
     build: {
-        outDir: '_public',
+        outDir: 'public',
         emptyOutDir: false,
         rollupOptions: {
-            input: '_assets/app.js',
+            input: 'assets/app.js',
             output: {
                 entryFileNames: 'app.js',
                 assetFileNames: 'app.[ext]'

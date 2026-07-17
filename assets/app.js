@@ -3,7 +3,35 @@ import './app.css';
 import { createIcons, icons } from 'lucide';
 import Swal from 'sweetalert2';
 
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
+}
+
+let $themeToggle = document.querySelector('[data-theme-toggle]');
+if ($themeToggle !== null) {
+    let syncThemeToggle = () => {
+        let dark = document.documentElement.classList.contains('dark');
+        $themeToggle.title = dark ? 'Dark Mode deaktivieren' : 'Dark Mode aktivieren';
+        $themeToggle.setAttribute('aria-label', $themeToggle.title);
+        $themeToggle.innerHTML = `<i data-lucide="${dark ? 'sun' : 'moon'}" class="size-4"></i>`;
+    };
+    syncThemeToggle();
+    $themeToggle.addEventListener('click', () => {
+        let dark = !document.documentElement.classList.contains('dark');
+        document.documentElement.classList.toggle('dark', dark);
+        localStorage.setItem('mampf-theme', dark ? 'dark' : 'light');
+        syncThemeToggle();
+        createIcons({ icons });
+    });
+}
+
 createIcons({ icons });
+
+document.querySelectorAll('[data-week-select]').forEach($select => {
+    $select.addEventListener('change', () => {
+        window.location.assign($select.value);
+    });
+});
 
 let showError = message =>
     Swal.fire({
@@ -70,10 +98,18 @@ document.querySelectorAll('[data-confirm]').forEach($form => {
             return;
         }
         event.preventDefault();
+        let expectedInput = $form.dataset.confirmInput;
         let result = await Swal.fire({
             title: $form.dataset.confirmTitle,
             text: $form.dataset.confirm,
             icon: $form.dataset.confirmIcon || 'warning',
+            input: expectedInput === undefined ? undefined : 'text',
+            inputLabel: expectedInput === undefined ? undefined : `Zur Bestätigung ${expectedInput} eingeben`,
+            inputPlaceholder: expectedInput,
+            inputValidator: value =>
+                expectedInput !== undefined && value !== expectedInput
+                    ? `Bitte exakt ${expectedInput} eingeben.`
+                    : undefined,
             showCancelButton: true,
             confirmButtonText: $form.dataset.confirmButton || 'SICHER',
             cancelButtonText: 'Abbrechen',
@@ -83,6 +119,13 @@ document.querySelectorAll('[data-confirm]').forEach($form => {
             reverseButtons: true
         });
         if (result.isConfirmed) {
+            if (expectedInput !== undefined) {
+                let $confirmation = document.createElement('input');
+                $confirmation.type = 'hidden';
+                $confirmation.name = 'confirmation';
+                $confirmation.value = String(result.value || '');
+                $form.append($confirmation);
+            }
             confirmedForms.add($form);
             if (event.submitter instanceof HTMLElement) {
                 $form.requestSubmit(event.submitter);
@@ -310,6 +353,7 @@ if ($taskForm !== null) {
     let $time = document.querySelector('[data-task-time]');
     let $status = document.querySelector('[data-task-status]');
     let $stop = document.querySelector('[data-task-stop]');
+    let $basket = document.querySelector('[data-task-basket]');
     let $return = document.querySelector('[data-task-return]');
     let controller = new AbortController();
     let startedAt = performance.now();
@@ -368,6 +412,10 @@ if ($taskForm !== null) {
               ? 'h-full rounded-full bg-amber-600 transition-[width] duration-300'
               : 'h-full rounded-full bg-red-700 transition-[width] duration-300';
         $stop.classList.add('hidden');
+        if ($basket !== null && success) {
+            $basket.classList.remove('hidden');
+            $basket.classList.add('flex');
+        }
         $return.href = update.return_url || $return.href;
         $return.classList.remove('hidden');
         $return.classList.add('flex');

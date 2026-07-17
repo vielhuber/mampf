@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace Mampf;
 
 use DateTimeImmutable;
+use JsonException;
+use PDOException;
 use RuntimeException;
 
 final class Application
@@ -12,6 +14,10 @@ final class Application
 
     public function run(): never
     {
+        $path = (string) parse_url(url: (string) ($_SERVER['REQUEST_URI'] ?? '/'), component: PHP_URL_PATH);
+        if ($path === '/cron') {
+            $this->handleCron();
+        }
         session_set_cookie_params([
             'lifetime' => 60 * 60 * 24 * 365,
             'path' => '/',
@@ -23,7 +29,6 @@ final class Application
         if (!$this->runtime->auth->isLoggedIn()) {
             $this->renderLogin();
         }
-        $path = (string) parse_url(url: (string) ($_SERVER['REQUEST_URI'] ?? '/'), component: PHP_URL_PATH);
         if ($path === '/task/cancel') {
             $this->handleTaskCancellation();
         }
@@ -98,13 +103,6 @@ final class Application
         $this->renderDashboard(
             recipes: $recipes,
             total: $count,
-            ingredientCount: $this->runtime->database->mappedIngredientCount(
-                search: $search,
-                year: $year,
-                week: $week,
-                ingredientFilter: $ingredientFilter,
-                weekFilter: $weekFilter
-            ),
             weekRecipeCount: $this->runtime->database->weekRecipeCount(year: $year, week: $week),
             year: $year,
             week: $week,
@@ -116,6 +114,160 @@ final class Application
             pages: max(1, (int) ceil(num: $count / $perPage)),
             partial: $partial
         );
+    }
+
+    private function handleCron(): never
+    {
+        header(header: 'Content-Type: application/json; charset=utf-8');
+        header(header: 'Cache-Control: no-store');
+        if (!in_array(needle: (string) ($_SERVER['REQUEST_METHOD'] ?? ''), haystack: ['GET', 'POST'], strict: true)) {
+            header(header: 'Allow: GET, POST');
+            http_response_code(response_code: 405);
+            echo json_encode(value: ['error' => 'Methode nicht erlaubt.'], flags: JSON_THROW_ON_ERROR);
+            exit();
+        }
+        $configuredToken = trim(string: (string) ($_SERVER['CRON_TOKEN'] ?? ''));
+        if ($configuredToken === '') {
+            http_response_code(response_code: 503);
+            echo json_encode(value: ['error' => 'CRON_TOKEN ist nicht konfiguriert.'], flags: JSON_THROW_ON_ERROR);
+            exit();
+        }
+        $providedToken = trim(string: (string) ($_GET['token'] ?? ''));
+        if ($providedToken === '' || !hash_equals(known_string: $configuredToken, user_string: $providedToken)) {
+            http_response_code(response_code: 401);
+            echo json_encode(value: ['error' => 'Ungültiges Cron-Token.'], flags: JSON_THROW_ON_ERROR);
+            exit();
+        }
+
+        $dataDirectory = $this->runtime->root . '/.data';
+        if (
+            !is_dir(filename: $dataDirectory) &&
+            !mkdir(directory: $dataDirectory, permissions: 0770, recursive: true)
+        ) {
+            http_response_code(response_code: 500);
+            echo json_encode(
+                value: ['error' => 'Das Datenverzeichnis konnte nicht erstellt werden.'],
+                flags: JSON_THROW_ON_ERROR
+            );
+            exit();
+        }
+        $lockHandle = fopen(filename: $dataDirectory . '/cron.lock', mode: 'c+');
+        if ($lockHandle === false) {
+            http_response_code(response_code: 500);
+            echo json_encode(
+                value: ['error' => 'Die Cron-Sperre konnte nicht geöffnet werden.'],
+                flags: JSON_THROW_ON_ERROR
+            );
+            exit();
+        }
+        if (!flock(stream: $lockHandle, operation: LOCK_EX | LOCK_NB)) {
+            fclose(stream: $lockHandle);
+            http_response_code(response_code: 409);
+            echo json_encode(value: ['error' => 'Die Cron-Aktualisierung läuft bereits.'], flags: JSON_THROW_ON_ERROR);
+            exit();
+        }
+
+        set_time_limit(seconds: 0);
+        ignore_user_abort(enable: true);
+        $logFile = $dataDirectory . '/cron.log';
+        $appendLog = static function (string $level, string $message) use ($logFile): void {
+            $line = sprintf("[%s] %-5s %s\n", date(format: 'Y-m-d H:i:s'), $level, $message);
+            if (file_put_contents(filename: $logFile, data: $line, flags: FILE_APPEND | LOCK_EX) === false) {
+                throw new RuntimeException(message: 'Das Cron-Protokoll konnte nicht geschrieben werden.');
+            }
+        };
+        $startedAt = microtime(as_float: true);
+        $statusCode = 200;
+        $response = [];
+        try {
+            $appendLog('START', 'Aktualisierung gestartet.');
+            $appendLog('INFO', 'HelloFresh-Rezepte werden aktualisiert.');
+            $recipes = $this->runtime->helloFreshScraper->scrapeRecipes(
+                progress: static function (int $scanned, int $total, int $created, int $updated) use (
+                    $appendLog
+                ): void {
+                    $appendLog(
+                        'INFO',
+                        sprintf(
+                            'Rezepte: %d/%d geprüft, %d neu, %d aktualisiert.',
+                            $scanned,
+                            $total,
+                            $created,
+                            $updated
+                        )
+                    );
+                }
+            );
+            $appendLog(
+                'INFO',
+                sprintf(
+                    'Rezepte abgeschlossen: %d neu, %d aktualisiert, %d ausgefiltert, %d nicht aufgelöst.',
+                    $recipes['created'],
+                    $recipes['updated'],
+                    $recipes['filtered'],
+                    $recipes['unresolved']
+                )
+            );
+            $appendLog('INFO', 'REWE-Zutaten werden zugeordnet.');
+            $ingredients = $this->runtime->helloFreshScraper->scrapeIngredients(
+                reweClient: $this->runtime->reweClient,
+                progress: static function (
+                    string $name,
+                    bool $success,
+                    int $current,
+                    int $total,
+                    string $error = ''
+                ) use ($appendLog): void {
+                    if ($current % 100 !== 0 && $current !== $total && !$success) {
+                        $appendLog('ERROR', $name . ': ' . $error);
+                        return;
+                    }
+                    if ($current % 100 !== 0 && $current !== $total) {
+                        return;
+                    }
+                    $appendLog('INFO', sprintf('Zutaten: %d/%d Rezepte verarbeitet.', $current, $total));
+                }
+            );
+            if ($ingredients['errors'] !== []) {
+                foreach ($ingredients['errors'] as $error) {
+                    $appendLog('ERROR', $error);
+                }
+            }
+            $appendLog(
+                $ingredients['failed'] === 0 ? 'INFO' : 'ERROR',
+                sprintf(
+                    'Zutaten abgeschlossen: %d Rezepte verarbeitet, %d fehlgeschlagen.',
+                    $ingredients['processed'],
+                    $ingredients['failed']
+                )
+            );
+            $duration = round(num: microtime(as_float: true) - $startedAt, precision: 2);
+            $appendLog($ingredients['failed'] === 0 ? 'DONE' : 'ERROR', 'Laufzeit: ' . $duration . ' Sekunden.');
+            $statusCode = $ingredients['failed'] === 0 ? 200 : 500;
+            $response = [
+                'status' => $ingredients['failed'] === 0 ? 'success' : 'partial',
+                'recipes' => $recipes,
+                'ingredients' => $ingredients,
+                'duration_seconds' => $duration,
+                'log' => '.data/cron.log'
+            ];
+        } catch (RuntimeException | JsonException | PDOException $exception) {
+            $statusCode = 500;
+            $response = ['status' => 'error', 'error' => $exception->getMessage()];
+            try {
+                $appendLog('ERROR', $exception->getMessage());
+            } catch (RuntimeException) {
+            }
+        } finally {
+            flock(stream: $lockHandle, operation: LOCK_UN);
+            fclose(stream: $lockHandle);
+        }
+        http_response_code(response_code: $statusCode);
+        echo json_encode(
+            value: $response,
+            flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+        );
+        exit();
     }
 
     private function handleAction(): never
@@ -154,6 +306,9 @@ final class Application
                 $this->flash(type: 'success', message: 'Rezept aus Kalenderwoche ' . $week . ' entfernt.');
             }
             if ($action === 'reset') {
+                if ((string) ($_POST['confirmation'] ?? '') !== 'DELETE') {
+                    throw new RuntimeException(message: 'Gib zum Zurücksetzen DELETE ein.');
+                }
                 $deletedRecipes = $this->runtime->database->resetRecipes();
                 $this->flash(
                     type: 'success',
@@ -384,8 +539,8 @@ final class Application
                 );
                 $this->runtime->database->saveOrder(year: $year, week: $week, status: 'completed', result: $result);
                 $message = sprintf(
-                    'REWE-Warenkorb ersetzt: %d Produkte entfernt, %d Produkte hinzugefügt.',
-                    $result['removed'],
+                    'REWE-Warenkorb ersetzt: %d Stück aus %d unterschiedlichen Produkten hinzugefügt.',
+                    array_sum(array: array_column(array: $result['added'], column_key: 'quantity')),
                     count(value: $result['added'])
                 );
             }
@@ -479,6 +634,14 @@ final class Application
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>mampf · Anmelden</title>
+                <script>document.documentElement.classList.toggle('dark', localStorage.getItem('mampf-theme') === 'dark');</script>
+                <link rel="manifest" href="/manifest.webmanifest">
+                <meta name="theme-color" content="#047857">
+                <meta name="mobile-web-app-capable" content="yes">
+                <meta name="apple-mobile-web-app-capable" content="yes">
+                <meta name="apple-mobile-web-app-status-bar-style" content="default">
+                <meta name="apple-mobile-web-app-title" content="mampf">
+                <link rel="apple-touch-icon" href="/apple-touch-icon.png">
                 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
                 <link rel="stylesheet" href="{$assets['css']}">
                 <script type="module" src="{$assets['js']}" defer></script>
@@ -515,7 +678,7 @@ final class Application
             'scrape-recipes' => [
                 'title' => 'Rezepte aktualisieren',
                 'description' =>
-                    'HelloFresh-Rezepte, Zutaten für zwei Portionen und Beliebtheitswerte werden aktualisiert.',
+                    'HelloFresh-Rezepte, Zutaten für drei Portionen und Beliebtheitswerte werden aktualisiert.',
                 'icon' => 'refresh-cw'
             ],
             'scrape-ingredients' => [
@@ -524,7 +687,7 @@ final class Application
                 'icon' => 'scan-search'
             ],
             default => [
-                'title' => 'Woche bestellen',
+                'title' => 'Produkte dieser Woche bestellen',
                 'description' => 'Der REWE-Warenkorb wird geleert und mit den Zutaten dieser Woche gefüllt.',
                 'icon' => 'shopping-cart'
             ]
@@ -532,6 +695,13 @@ final class Application
         $title = $this->escape(value: $configuration['title']);
         $description = $this->escape(value: $configuration['description']);
         $icon = $this->escape(value: $configuration['icon']);
+        $isOrder = (string) $task['action'] === 'order';
+        $basketLink = $isOrder
+            ? '<a data-task-basket href="https://www.rewe.de/shop/checkout/basket" target="_blank" rel="noopener noreferrer" class="mt-6 hidden w-full items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 py-3 text-base font-semibold text-white hover:bg-emerald-800"><i data-lucide="shopping-cart" class="size-5"></i>Zum Warenkorb<i data-lucide="external-link" class="size-4"></i></a>'
+            : '';
+        $returnClasses = $isOrder
+            ? 'mt-3 border border-stone-300 text-stone-700 hover:bg-stone-50'
+            : 'mt-6 bg-emerald-700 text-white hover:bg-emerald-800';
         echo <<<HTML
             <!doctype html>
             <html lang="de">
@@ -539,6 +709,14 @@ final class Application
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>mampf · {$title}</title>
+                <script>document.documentElement.classList.toggle('dark', localStorage.getItem('mampf-theme') === 'dark');</script>
+                <link rel="manifest" href="/manifest.webmanifest">
+                <meta name="theme-color" content="#047857">
+                <meta name="mobile-web-app-capable" content="yes">
+                <meta name="apple-mobile-web-app-capable" content="yes">
+                <meta name="apple-mobile-web-app-status-bar-style" content="default">
+                <meta name="apple-mobile-web-app-title" content="mampf">
+                <link rel="apple-touch-icon" href="/apple-touch-icon.png">
                 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
                 <link rel="stylesheet" href="{$assets['css']}">
                 <script type="module" src="{$assets['js']}" defer></script>
@@ -565,7 +743,8 @@ final class Application
                         <div class="mt-3 flex items-center justify-between gap-4 text-xs font-medium text-stone-500"><span data-task-percentage class="tabular-nums">1 %</span><span data-task-time class="tabular-nums">0:00 vergangen · Restzeit wird berechnet</span></div>
                         <p data-task-status class="mt-2 min-h-5 text-sm text-stone-600">Vorgang wird gestartet.</p>
                         <button data-task-stop type="button" class="mt-6 flex w-full items-center justify-center gap-2 rounded-md border border-red-200 px-4 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50"><i data-lucide="square" class="size-3.5 fill-current"></i>Stoppen</button>
-                        <a data-task-return href="{$returnUrl}" class="mt-6 hidden w-full items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-800"><i data-lucide="arrow-left" class="size-4"></i>Zurück zum Wochenplan</a>
+                        {$basketLink}
+                        <a data-task-return href="{$returnUrl}" class="hidden w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium {$returnClasses}"><i data-lucide="arrow-left" class="size-4"></i>Zurück zum Wochenplan</a>
                         <form data-task-form class="hidden">
                             <input type="hidden" name="csrf" value="{$csrf}">
                             <input type="hidden" name="task_id" value="{$taskIdValue}">
@@ -606,7 +785,6 @@ final class Application
     private function renderDashboard(
         array $recipes,
         int $total,
-        int $ingredientCount,
         int $weekRecipeCount,
         int $year,
         int $week,
@@ -654,6 +832,13 @@ final class Application
             $name = $this->escape(value: (string) $recipe['name']);
             $imageUrl = $this->escape(value: (string) $recipe['image_url']);
             $sourceUrl = $this->escape(value: (string) $recipe['source_url']);
+            $pdfUrl = $this->escape(value: (string) ($recipe['pdf_url'] ?? ''));
+            $pdfLink =
+                $pdfUrl === ''
+                    ? ''
+                    : '<a href="' .
+                        $pdfUrl .
+                        '" target="_blank" rel="noopener noreferrer" title="Rezept als PDF öffnen" aria-label="Rezept als PDF öffnen" class="grid size-7 shrink-0 place-items-center rounded-md border border-red-200 text-red-700 hover:bg-red-50"><i data-lucide="file-text" class="size-4"></i></a>';
             $selected = (int) $recipe['selected'] === 1;
             $ingredientsKnown = $recipe['ingredients_json'] !== null;
             $ingredients = $ingredientsKnown
@@ -784,7 +969,7 @@ final class Application
                         <img src="{$imageUrl}" alt="{$name}" loading="lazy" class="size-full object-cover transition duration-200 hover:scale-[1.02]">
                     </a>
                     <div class="p-4">
-                        <h2 class="line-clamp-2 min-h-12 text-base font-semibold leading-6"><a href="{$sourceUrl}" target="_blank" rel="noopener noreferrer" class="hover:text-emerald-700 hover:underline">{$name}</a></h2>
+                        <div class="flex min-h-12 items-start gap-2"><h2 class="line-clamp-2 flex-1 text-base font-semibold leading-6"><a href="{$sourceUrl}" target="_blank" rel="noopener noreferrer" class="hover:text-emerald-700 hover:underline">{$name}</a></h2>{$pdfLink}</div>
                         <div class="mt-2 flex min-h-5 items-center justify-between gap-3">
                             {$status}
                             <span class="flex shrink-0 items-center gap-2 text-xs text-stone-500"><span title="{$favoritesCount} Favoriten" class="inline-flex items-center gap-1"><i data-lucide="heart" class="size-3.5"></i>{$favoritesCount}</span><span title="{$ratingsCount} Bewertungen" class="inline-flex items-center gap-1"><i data-lucide="star" class="size-3.5"></i>{$averageRating}</span></span>
@@ -835,21 +1020,72 @@ final class Application
             $this->option(value: 'all', label: 'Alle Rezepte', selected: $weekFilter) .
             $this->option(value: 'selected', label: 'In dieser Woche', selected: $weekFilter) .
             $this->option(value: 'unselected', label: 'Nicht in dieser Woche', selected: $weekFilter);
-        $calendarWeekOptions = '';
-        for ($calendarWeek = 1; $calendarWeek <= 53; $calendarWeek++) {
-            $calendarWeekOptions .= $this->option(
-                value: (string) $calendarWeek,
-                label: (string) $calendarWeek,
-                selected: (string) $week
+        $weekTiles = '';
+        $mobileWeekOptions = '';
+        $weekCounts = $this->runtime->database->weekRecipeCounts();
+        $now = new DateTimeImmutable(datetime: 'now');
+        $currentWeekStart = $now->setISODate(
+            year: (int) $now->format(format: 'o'),
+            week: (int) $now->format(format: 'W')
+        );
+        for ($weekOffset = -2; $weekOffset <= 4; $weekOffset++) {
+            $weekStart = $currentWeekStart->modify(modifier: ($weekOffset >= 0 ? '+' : '') . $weekOffset . ' weeks');
+            $tileYear = (int) $weekStart->format(format: 'o');
+            $tileWeek = (int) $weekStart->format(format: 'W');
+            $countKey = sprintf('%04d-W%02d', $tileYear, $tileWeek);
+            $tileCount = $weekCounts[$countKey] ?? 0;
+            $tileCountLabel = $tileCount === 1 ? '1 Gericht' : $tileCount . ' Gerichte';
+            $dateLabel =
+                $weekStart->format(format: 'd.m.') .
+                '–' .
+                $weekStart->modify(modifier: '+6 days')->format(format: 'd.m.');
+            $isActiveWeek = $tileYear === $year && $tileWeek === $week;
+            $tileStyle = match (true) {
+                $isActiveWeek => 'border-emerald-700 bg-emerald-700 text-white',
+                $weekOffset === 0 => 'border-emerald-300 bg-emerald-50 text-emerald-900',
+                default => 'border-stone-200 bg-white text-stone-700 hover:border-emerald-300 hover:bg-emerald-50'
+            };
+            $tileQuery = $this->escape(
+                value: http_build_query(
+                    data: [
+                        'year' => $tileYear,
+                        'week' => $tileWeek,
+                        'search' => $search,
+                        'ingredients' => $ingredientFilter,
+                        'week_filter' => $weekFilter,
+                        'sort' => $sort
+                    ]
+                )
             );
-        }
-        $calendarYearOptions = '';
-        for ($calendarYear = 2020; $calendarYear <= 2100; $calendarYear++) {
-            $calendarYearOptions .= $this->option(
-                value: (string) $calendarYear,
-                label: (string) $calendarYear,
-                selected: (string) $year
-            );
+            $weekTiles .=
+                '<a href="/?' .
+                $tileQuery .
+                '" title="Kalenderwoche ' .
+                $tileWeek .
+                ', ' .
+                $tileYear .
+                '" class="flex w-[5.25rem] shrink-0 flex-col items-center rounded-md border px-2 py-1.5 text-center ' .
+                $tileStyle .
+                '"><span class="text-[10px] leading-3 opacity-75">' .
+                $dateLabel .
+                '</span><strong class="mt-0.5 text-sm leading-4">KW ' .
+                $tileWeek .
+                '</strong><span class="mt-0.5 text-[10px] leading-3 opacity-80">' .
+                $tileCountLabel .
+                '</span></a>';
+            $mobileWeekOptions .=
+                '<option value="/?' .
+                $tileQuery .
+                '"' .
+                ($isActiveWeek ? ' selected' : '') .
+                '>KW ' .
+                $tileWeek .
+                ' · ' .
+                $dateLabel .
+                ' · ' .
+                $tileCountLabel .
+                ($weekOffset === 0 ? ' · aktuell' : '') .
+                '</option>';
         }
         $sortOptions =
             $this->option(value: 'favorites_desc', label: 'Beliebteste', selected: $sort) .
@@ -877,6 +1113,14 @@ final class Application
                 : 'Ausgewählte Woche bei REWE bestellen';
         $orderStyle =
             $weekRecipeCount === 0 ? 'bg-stone-300 text-stone-500' : 'bg-emerald-700 text-white hover:bg-emerald-800';
+        $filterControls = <<<HTML
+            <input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">
+            <label class="relative flex-1"><i data-lucide="search" class="pointer-events-none absolute left-3 top-2.5 size-4 text-stone-400"></i><input name="search" value="{$searchValue}" placeholder="Rezepte suchen" aria-label="Rezepte suchen" class="w-full rounded-md border border-stone-300 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-emerald-700"></label>
+            <select name="ingredients" aria-label="Zutatenstatus" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$ingredientOptions}</select>
+            <select name="week_filter" aria-label="Wochenstatus" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$weekOptions}</select>
+            <select name="sort" aria-label="Sortierung" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$sortOptions}</select>
+            <button class="rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-50 sm:col-span-2 lg:col-span-1">Anwenden</button>
+        HTML;
         echo <<<HTML
             <!doctype html>
             <html lang="de">
@@ -884,40 +1128,47 @@ final class Application
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>mampf</title>
+                <script>document.documentElement.classList.toggle('dark', localStorage.getItem('mampf-theme') === 'dark');</script>
+                <link rel="manifest" href="/manifest.webmanifest">
+                <meta name="theme-color" content="#047857">
+                <meta name="mobile-web-app-capable" content="yes">
+                <meta name="apple-mobile-web-app-capable" content="yes">
+                <meta name="apple-mobile-web-app-status-bar-style" content="default">
+                <meta name="apple-mobile-web-app-title" content="mampf">
+                <link rel="apple-touch-icon" href="/apple-touch-icon.png">
                 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
                 <link rel="stylesheet" href="{$assets['css']}">
                 <script type="module" src="{$assets['js']}" defer></script>
             </head>
             <body data-csrf="{$csrf}" class="min-h-screen bg-stone-50 text-stone-950">
                 <header class="border-b border-stone-200 bg-white">
-                    <div class="mx-auto flex max-w-screen-2xl items-center justify-between px-5 py-4">
-                        <a href="/" class="flex items-center gap-3"><span class="grid size-9 place-items-center rounded-md bg-emerald-700 text-white"><i data-lucide="utensils" class="size-5"></i></span><span class="text-lg font-semibold">mampf</span></a>
-                        <button data-logout type="button" title="Abmelden" aria-label="Abmelden" class="grid size-9 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="log-out" class="size-4"></i></button>
+                    <div class="mx-auto grid max-w-screen-2xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-3 py-3 lg:grid-cols-[1fr_auto_1fr] lg:px-5">
+                        <a href="/" class="flex items-center gap-3 justify-self-start"><span class="grid size-9 place-items-center rounded-md bg-emerald-700 text-white"><i data-lucide="utensils" class="size-5"></i></span><span class="hidden text-lg font-semibold sm:inline">mampf</span></a>
+                        <nav aria-label="Kalenderwoche auswählen" class="mx-auto hidden max-w-full gap-1.5 overflow-x-auto px-1 py-1 lg:flex">{$weekTiles}</nav>
+                        <label class="relative mx-auto block w-full max-w-44 lg:hidden"><i data-lucide="calendar-days" class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-stone-500"></i><select data-week-select aria-label="Kalenderwoche auswählen" class="h-9 w-full appearance-none rounded-md border border-stone-300 bg-white py-1 pl-8 pr-7 text-xs font-medium outline-none focus:border-emerald-700">{$mobileWeekOptions}</select><i data-lucide="chevron-down" class="pointer-events-none absolute right-2 top-2.5 size-4 text-stone-500"></i></label>
+                        <div class="flex items-center justify-self-end gap-1">
+                            <form method="post" action="/task" data-confirm-title="Rezepte aktualisieren?" data-confirm="Alle HelloFresh-Rezepte, Zutaten für drei Portionen und PDF-Links werden aktualisiert." data-confirm-button="Aktualisieren"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-recipes"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Rezepte aktualisieren" aria-label="Rezepte aktualisieren" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="refresh-cw" class="size-4"></i></button></form>
+                            <form method="post" action="/task" data-confirm-title="Zutaten zuordnen?" data-confirm="Alle fehlenden und veralteten REWE-Produktzuordnungen werden geprüft und aktualisiert." data-confirm-button="Zuordnen"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-ingredients"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Zutaten zuordnen" aria-label="Zutaten zuordnen" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="scan-search" class="size-4"></i></button></form>
+                            <form method="post" data-confirm-title="Alles zurücksetzen?" data-confirm="Alle Rezepte, Zutatenzuordnungen, Bewertungen, Notizen und Bestellungen werden unwiderruflich gelöscht." data-confirm-button="SICHER LÖSCHEN" data-confirm-icon="error" data-confirm-input="DELETE"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="reset"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Alle Rezeptdaten löschen" aria-label="Alle Rezeptdaten löschen" class="grid size-8 place-items-center rounded-md border border-red-200 text-red-700 hover:bg-red-50"><i data-lucide="trash-2" class="size-4"></i></button></form>
+                            <button data-theme-toggle type="button" title="Dark Mode aktivieren" aria-label="Dark Mode aktivieren" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="moon" class="size-4"></i></button>
+                            <button data-logout type="button" title="Abmelden" aria-label="Abmelden" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="log-out" class="size-4"></i></button>
+                        </div>
                     </div>
                 </header>
                 {$flashHtml}
                 <main>
                     <section class="border-b border-stone-200 bg-white">
                         <div class="mx-auto grid max-w-screen-2xl gap-5 px-5 py-6 lg:grid-cols-[1fr_auto] lg:items-end">
-                            <div><p class="text-sm font-medium leading-5 text-emerald-700">Woche <span class="tabular-nums">{$week}</span> · <span class="tabular-nums">{$year}</span></p><h1 class="mt-1 text-2xl font-semibold">Wochenplan</h1><div class="mt-3 flex gap-5 text-sm text-stone-500"><span><strong class="text-stone-900">{$total}</strong> Rezepte</span><span><strong class="text-stone-900">{$ingredientCount}</strong> Zutaten zugeordnet</span></div></div>
+                            <div><p class="text-sm font-medium leading-5 text-emerald-700">Woche <span class="tabular-nums">{$week}</span> · <span class="tabular-nums">{$year}</span></p><h1 class="mt-1 text-2xl font-semibold">Wochenplan</h1><div class="mt-3 text-sm text-stone-500"><span><strong class="text-stone-900">{$total}</strong> Rezepte</span></div></div>
                             <div class="flex flex-wrap gap-2">
-                                <form method="post" action="/task"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-recipes"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="HelloFresh-Rezepte aktualisieren" class="flex items-center gap-2 rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium hover:bg-stone-50"><i data-lucide="refresh-cw" class="size-4"></i>Rezepte aktualisieren</button></form>
-                                <form method="post" action="/task"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-ingredients"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Alle Zutaten mit aktuellen REWE-Produkten abgleichen" class="flex items-center gap-2 rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium hover:bg-stone-50"><i data-lucide="scan-search" class="size-4"></i>Zutaten zuordnen</button></form>
-                                <form method="post" action="/task" data-confirm-title="Woche {$week} bestellen?" data-confirm="Der aktuelle REWE-Warenkorb wird vollständig geleert und durch die Zutaten dieser Woche ersetzt." data-confirm-button="SICHER BESTELLEN"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="order"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="{$orderTitle}" class="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium {$orderStyle}"{$orderDisabled}><i data-lucide="shopping-cart" class="size-4"></i>Woche bestellen</button></form>
-                                <form method="post" data-confirm-title="Alles zurücksetzen?" data-confirm="Alle Rezepte, Zutatenzuordnungen, Bewertungen, Notizen und Bestellungen werden unwiderruflich gelöscht." data-confirm-button="SICHER LÖSCHEN" data-confirm-icon="error"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="reset"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Alle Rezeptdaten löschen" class="flex items-center gap-2 rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50"><i data-lucide="trash-2" class="size-4"></i>Reset</button></form>
+                                <form method="post" action="/task" data-confirm-title="Woche {$week} bestellen?" data-confirm="Der aktuelle REWE-Warenkorb wird vollständig geleert und durch die Zutaten dieser Woche ersetzt." data-confirm-button="Jetzt bestellen!"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="order"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="{$orderTitle}" class="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium {$orderStyle}"{$orderDisabled}><i data-lucide="shopping-cart" class="size-4"></i>Produkte dieser Woche bestellen</button></form>
                             </div>
                         </div>
                     </section>
                     <section class="border-b border-stone-200 bg-stone-100/70">
                         <div class="mx-auto max-w-screen-2xl px-5 py-4">
-                            <form method="get" class="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(15rem,1fr)_auto_auto_auto_auto_auto]">
-                                <label class="relative flex-1"><i data-lucide="search" class="pointer-events-none absolute left-3 top-2.5 size-4 text-stone-400"></i><input name="search" value="{$searchValue}" placeholder="Rezepte suchen" aria-label="Rezepte suchen" class="w-full rounded-md border border-stone-300 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-emerald-700"></label>
-                                <select name="ingredients" aria-label="Zutatenstatus" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$ingredientOptions}</select>
-                                <select name="week_filter" aria-label="Wochenstatus" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$weekOptions}</select>
-                                <select name="sort" aria-label="Sortierung" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$sortOptions}</select>
-                                <div class="flex h-[38px] items-center gap-1 rounded-md border border-stone-300 bg-white px-2 text-sm sm:col-span-2 lg:col-span-1"><span class="leading-none text-stone-500">Woche</span><select name="week" aria-label="Kalenderwoche" class="h-7 bg-transparent px-1 leading-none outline-none">{$calendarWeekOptions}</select><span class="leading-none text-stone-500">,</span><select name="year" aria-label="Kalenderjahr" class="h-7 bg-transparent px-1 leading-none outline-none">{$calendarYearOptions}</select></div>
-                                <button class="rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-50 sm:col-span-2 lg:col-span-1">Anwenden</button>
-                            </form>
+                            <details class="group lg:hidden"><summary class="flex cursor-pointer list-none items-center justify-between rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium"><span class="flex items-center gap-2"><i data-lucide="sliders-horizontal" class="size-4"></i>Filter und Sortierung</span><i data-lucide="chevron-down" class="size-4 transition-transform group-open:rotate-180"></i></summary><form method="get" class="mt-3 grid gap-2">{$filterControls}</form></details>
+                            <form method="get" class="hidden gap-2 lg:grid lg:grid-cols-[minmax(15rem,1fr)_auto_auto_auto_auto]">{$filterControls}</form>
                         </div>
                     </section>
                     <section class="mx-auto max-w-screen-2xl px-5 py-6">

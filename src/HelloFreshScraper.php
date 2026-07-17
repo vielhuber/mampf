@@ -110,7 +110,8 @@ final class HelloFreshScraper
                     sourceUpdatedAt: isset($item['updatedAt']) ? (string) $item['updatedAt'] : null,
                     favoritesCount: (int) ($item['favoritesCount'] ?? 0),
                     ratingsCount: (int) ($item['ratingsCount'] ?? 0),
-                    averageRating: (float) ($item['averageRating'] ?? 0)
+                    averageRating: (float) ($item['averageRating'] ?? 0),
+                    pdfUrl: $this->pdfUrl(recipe: $item)
                 );
                 $this->database->updateIngredientDefinitions(
                     sourceId: $sourceId,
@@ -189,7 +190,8 @@ final class HelloFreshScraper
                         sourceUpdatedAt: isset($item['updatedAt']) ? (string) $item['updatedAt'] : null,
                         favoritesCount: (int) ($item['favoritesCount'] ?? 0),
                         ratingsCount: (int) ($item['ratingsCount'] ?? 0),
-                        averageRating: (float) ($item['averageRating'] ?? 0)
+                        averageRating: (float) ($item['averageRating'] ?? 0),
+                        pdfUrl: $this->pdfUrl(recipe: $item)
                     );
                     $this->database->updateIngredientDefinitions(
                         sourceId: $sourceId,
@@ -291,7 +293,7 @@ final class HelloFreshScraper
     {
         $amounts = [];
         foreach ($recipe['yields'] ?? [] as $yield) {
-            if (!is_array(value: $yield) || (int) ($yield['yields'] ?? 0) !== 2) {
+            if (!is_array(value: $yield) || (int) ($yield['yields'] ?? 0) !== 3) {
                 continue;
             }
             foreach ($yield['ingredients'] ?? [] as $amount) {
@@ -358,6 +360,21 @@ final class HelloFreshScraper
             return self::IMAGE_URL . basename(path: (string) parse_url(url: $imageUrl, component: PHP_URL_PATH));
         }
         return $imageUrl;
+    }
+
+    /** @param array<string, mixed> $recipe */
+    private function pdfUrl(array $recipe): ?string
+    {
+        $pdfUrl = trim(string: (string) ($recipe['cardLink'] ?? ''));
+        if ($pdfUrl === '') {
+            return null;
+        }
+        $host = strtolower(string: (string) parse_url(url: $pdfUrl, component: PHP_URL_HOST));
+        $path = strtolower(string: (string) parse_url(url: $pdfUrl, component: PHP_URL_PATH));
+        if ($host !== 'www.hellofresh.de' || !str_ends_with(haystack: $path, needle: '.pdf')) {
+            return null;
+        }
+        return $pdfUrl;
     }
 
     private function isTestRecipe(string $name): bool

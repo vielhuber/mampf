@@ -13,13 +13,39 @@ final class DatabaseTest extends TestCase
         $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
         $database = new Database(path: $path);
 
-        $this->assertTrue($database->upsertRecipe('abc', 'First', 'image', 'https://example.org/abc', null, 2, 1, 4));
+        $this->assertTrue(
+            $database->upsertRecipe(
+                'abc',
+                'First',
+                'image',
+                'https://example.org/abc',
+                null,
+                2,
+                1,
+                4,
+                'https://www.hellofresh.de/recipecards/card/first.pdf'
+            )
+        );
         $this->assertFalse(
-            $database->upsertRecipe('abc', 'Updated', 'image-2', 'https://example.org/abc', null, 7, 3, 4.5)
+            $database->upsertRecipe(
+                'abc',
+                'Updated',
+                'image-2',
+                'https://example.org/abc',
+                null,
+                7,
+                3,
+                4.5,
+                'https://www.hellofresh.de/recipecards/card/updated.pdf'
+            )
         );
         $this->assertSame(1, $database->recipeCount(search: '', year: 2026, week: 29));
         $this->assertSame('Updated', $database->recipes('', 1, 10, 2026, 29)[0]['name']);
         $this->assertSame(7, $database->recipes('', 1, 10, 2026, 29)[0]['favorites_count']);
+        $this->assertSame(
+            'https://www.hellofresh.de/recipecards/card/updated.pdf',
+            $database->recipes('', 1, 10, 2026, 29)[0]['pdf_url']
+        );
 
         unlink(filename: $path);
     }
@@ -37,9 +63,11 @@ final class DatabaseTest extends TestCase
 
         $database->assignRecipe($recipeId, 2026, 29);
         $database->assignRecipe($recipeId, 2026, 29);
+        $database->assignRecipe($recipeId, 2026, 30);
 
         $this->assertCount(1, $database->recipesForWeek(2026, 29));
         $this->assertSame(1, $database->weekRecipeCount(2026, 29));
+        $this->assertSame(['2026-W29' => 1, '2026-W30' => 1], $database->weekRecipeCounts());
         unlink(filename: $path);
     }
 

@@ -34,9 +34,15 @@ final class Database
                     name TEXT NOT NULL,
                     image_url TEXT NOT NULL,
                     source_url TEXT NOT NULL UNIQUE,
+                    pdf_url TEXT,
                     ingredients_json TEXT,
+                    ingredient_count INTEGER NOT NULL DEFAULT 0,
+                    mapped_ingredient_count INTEGER NOT NULL DEFAULT 0,
                     source_updated_at TEXT,
                     ingredients_scraped_at TEXT,
+                    favorites_count INTEGER NOT NULL DEFAULT 0,
+                    ratings_count INTEGER NOT NULL DEFAULT 0,
+                    average_rating REAL NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
@@ -97,8 +103,14 @@ final class Database
             array: $this->connection->fetch_all('PRAGMA table_info(recipes)'),
             column_key: 'name'
         );
+        $requiresIngredientCountBackfill =
+            !in_array(needle: 'ingredient_count', haystack: $recipeColumns, strict: true) ||
+            !in_array(needle: 'mapped_ingredient_count', haystack: $recipeColumns, strict: true);
         foreach (
             [
+                'pdf_url' => 'TEXT',
+                'ingredient_count' => 'INTEGER NOT NULL DEFAULT 0',
+                'mapped_ingredient_count' => 'INTEGER NOT NULL DEFAULT 0',
                 'favorites_count' => 'INTEGER NOT NULL DEFAULT 0',
                 'ratings_count' => 'INTEGER NOT NULL DEFAULT 0',
                 'average_rating' => 'REAL NOT NULL DEFAULT 0'
@@ -110,6 +122,27 @@ final class Database
             }
             $this->connection->query('ALTER TABLE recipes ADD COLUMN ' . $column . ' ' . $definition);
         }
+        if ($requiresIngredientCountBackfill) {
+            $this->connection->query(
+                <<<'SQL'
+                    UPDATE recipes
+                    SET ingredient_count = json_array_length(COALESCE(ingredients_json, '[]')),
+                        mapped_ingredient_count = (
+                            SELECT COUNT(*)
+                            FROM json_each(recipes.ingredients_json) AS ingredient
+                            WHERE COALESCE(json_extract(ingredient.value, '$.selected.listing_id'), '') <> ''
+                        )
+                SQL
+            );
+        }
+        $this->connection->query(
+            <<<'SQL'
+                CREATE INDEX IF NOT EXISTS recipes_ingredient_counts
+                    ON recipes(ingredient_count, mapped_ingredient_count);
+                CREATE INDEX IF NOT EXISTS recipes_favorites
+                    ON recipes(favorites_count DESC, ratings_count DESC, name COLLATE NOCASE);
+            SQL
+        );
     }
 
     public function upsertRecipe(
@@ -120,7 +153,8 @@ final class Database
         ?string $sourceUpdatedAt,
         int $favoritesCount = 0,
         int $ratingsCount = 0,
-        float $averageRating = 0
+        float $averageRating = 0,
+        ?string $pdfUrl = null
     ): bool {
         $isNew = $this->connection->fetch_var('SELECT 1 FROM recipes WHERE source_id = ?', $sourceId) === null;
         $this->connection->query(
@@ -130,16 +164,18 @@ final class Database
                     name,
                     image_url,
                     source_url,
+                    pdf_url,
                     source_updated_at,
                     favorites_count,
                     ratings_count,
                     average_rating
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(source_id) DO UPDATE SET
                     name = excluded.name,
                     image_url = excluded.image_url,
                     source_url = excluded.source_url,
+                    pdf_url = excluded.pdf_url,
                     source_updated_at = excluded.source_updated_at,
                     favorites_count = excluded.favorites_count,
                     ratings_count = excluded.ratings_count,
@@ -151,6 +187,7 @@ final class Database
             $name,
             $imageUrl,
             $sourceUrl,
+            $pdfUrl,
             $sourceUpdatedAt,
             max(0, $favoritesCount),
             max(0, $ratingsCount),
@@ -173,18 +210,10 @@ final class Database
     ): array {
         $offset = max(0, $page - 1) * $perPage;
         $ingredientCondition = match ($ingredientFilter) {
-            'mapped' => "(recipes.ingredients_json IS NOT NULL
-                AND json_array_length(recipes.ingredients_json) > 0
-                AND NOT EXISTS (
-                    SELECT 1 FROM json_each(recipes.ingredients_json) AS ingredient
-                    WHERE COALESCE(json_extract(ingredient.value, '$.selected.listing_id'), '') = ''
-                ))",
-            'unmapped' => "(recipes.ingredients_json IS NULL
-                OR json_array_length(recipes.ingredients_json) = 0
-                OR EXISTS (
-                    SELECT 1 FROM json_each(recipes.ingredients_json) AS ingredient
-                    WHERE COALESCE(json_extract(ingredient.value, '$.selected.listing_id'), '') = ''
-                ))",
+            'mapped' => '(recipes.ingredient_count > 0
+                AND recipes.mapped_ingredient_count = recipes.ingredient_count)',
+            'unmapped' => '(recipes.ingredient_count = 0
+                OR recipes.mapped_ingredient_count < recipes.ingredient_count)',
             default => '1 = 1'
         };
         $weekCondition = match ($weekFilter) {
@@ -220,7 +249,6 @@ final class Database
             <<<SQL
                 SELECT recipes.*,
                        CASE WHEN week_recipes.recipe_id IS NULL THEN 0 ELSE 1 END AS selected,
-                       json_array_length(COALESCE(recipes.ingredients_json, '[]')) AS ingredient_count,
                        COALESCE((
                            SELECT rating FROM recipe_ratings
                            WHERE recipe_id = recipes.id AND user_id = ?
@@ -269,18 +297,10 @@ final class Database
         string $weekFilter = 'all'
     ): int {
         $ingredientCondition = match ($ingredientFilter) {
-            'mapped' => "(recipes.ingredients_json IS NOT NULL
-                AND json_array_length(recipes.ingredients_json) > 0
-                AND NOT EXISTS (
-                    SELECT 1 FROM json_each(recipes.ingredients_json) AS ingredient
-                    WHERE COALESCE(json_extract(ingredient.value, '$.selected.listing_id'), '') = ''
-                ))",
-            'unmapped' => "(recipes.ingredients_json IS NULL
-                OR json_array_length(recipes.ingredients_json) = 0
-                OR EXISTS (
-                    SELECT 1 FROM json_each(recipes.ingredients_json) AS ingredient
-                    WHERE COALESCE(json_extract(ingredient.value, '$.selected.listing_id'), '') = ''
-                ))",
+            'mapped' => '(recipes.ingredient_count > 0
+                AND recipes.mapped_ingredient_count = recipes.ingredient_count)',
+            'unmapped' => '(recipes.ingredient_count = 0
+                OR recipes.mapped_ingredient_count < recipes.ingredient_count)',
             default => '1 = 1'
         };
         $weekCondition = match ($weekFilter) {
@@ -318,18 +338,10 @@ final class Database
         string $weekFilter = 'all'
     ): int {
         $ingredientCondition = match ($ingredientFilter) {
-            'mapped' => "(recipes.ingredients_json IS NOT NULL
-                AND json_array_length(recipes.ingredients_json) > 0
-                AND NOT EXISTS (
-                    SELECT 1 FROM json_each(recipes.ingredients_json) AS ingredient
-                    WHERE COALESCE(json_extract(ingredient.value, '$.selected.listing_id'), '') = ''
-                ))",
-            'unmapped' => "(recipes.ingredients_json IS NULL
-                OR json_array_length(recipes.ingredients_json) = 0
-                OR EXISTS (
-                    SELECT 1 FROM json_each(recipes.ingredients_json) AS ingredient
-                    WHERE COALESCE(json_extract(ingredient.value, '$.selected.listing_id'), '') = ''
-                ))",
+            'mapped' => '(recipes.ingredient_count > 0
+                AND recipes.mapped_ingredient_count = recipes.ingredient_count)',
+            'unmapped' => '(recipes.ingredient_count = 0
+                OR recipes.mapped_ingredient_count < recipes.ingredient_count)',
             default => '1 = 1'
         };
         $weekCondition = match ($weekFilter) {
@@ -340,17 +352,15 @@ final class Database
         $searchValue = '%' . $search . '%';
         return (int) $this->connection->fetch_var(
             <<<SQL
-                SELECT COUNT(*)
+                SELECT COALESCE(SUM(recipes.mapped_ingredient_count), 0)
                 FROM recipes
                 LEFT JOIN week_recipes
                   ON week_recipes.recipe_id = recipes.id
                  AND week_recipes.year = ?
                  AND week_recipes.week = ?
-                JOIN json_each(recipes.ingredients_json) AS ingredient
                 WHERE (recipes.name LIKE ? OR recipes.source_id LIKE ? OR recipes.source_url LIKE ?)
                   AND {$ingredientCondition}
                   AND {$weekCondition}
-                  AND COALESCE(json_extract(ingredient.value, '$.selected.listing_id'), '') <> ''
             SQL
             ,
             $year,
@@ -368,6 +378,20 @@ final class Database
             $year,
             $week
         );
+    }
+
+    /** @return array<string, int> */
+    public function weekRecipeCounts(): array
+    {
+        $rows = $this->connection->fetch_all(
+            'SELECT year, week, COUNT(*) AS recipe_count FROM week_recipes GROUP BY year, week'
+        );
+        $counts = [];
+        foreach ($rows as $row) {
+            $key = sprintf('%04d-W%02d', (int) $row['year'], (int) $row['week']);
+            $counts[$key] = (int) $row['recipe_count'];
+        }
+        return $counts;
     }
 
     public function resetRecipes(): int
@@ -397,11 +421,8 @@ final class Database
             SELECT * FROM recipes
             ORDER BY
                 CASE
-                    WHEN ingredients_json IS NULL OR json_array_length(ingredients_json) = 0 THEN 0
-                    WHEN EXISTS (
-                        SELECT 1 FROM json_each(recipes.ingredients_json) AS ingredient
-                        WHERE COALESCE(json_extract(ingredient.value, '$.selected.listing_id'), '') = ''
-                    ) THEN 0
+                    WHEN ingredient_count = 0 THEN 0
+                    WHEN mapped_ingredient_count < ingredient_count THEN 0
                     ELSE 1
                 END ASC,
                 COALESCE(ingredients_scraped_at, '') ASC,
@@ -417,10 +438,13 @@ final class Database
     /** @param list<array<string, mixed>> $ingredients */
     public function updateIngredients(int $recipeId, array $ingredients): void
     {
+        $mappedIngredientCount = $this->countMappedIngredients(ingredients: $ingredients);
         $this->connection->query(
             <<<'SQL'
                 UPDATE recipes
                 SET ingredients_json = ?,
+                    ingredient_count = ?,
+                    mapped_ingredient_count = ?,
                     ingredients_scraped_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
@@ -430,6 +454,8 @@ final class Database
                 value: $ingredients,
                 flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
             ),
+            count(value: $ingredients),
+            $mappedIngredientCount,
             $recipeId
         );
     }
@@ -465,10 +491,13 @@ final class Database
             }
         }
         unset($ingredient);
+        $mappedIngredientCount = $this->countMappedIngredients(ingredients: $ingredients);
         $this->connection->query(
             <<<'SQL'
                 UPDATE recipes
                 SET ingredients_json = ?,
+                    ingredient_count = ?,
+                    mapped_ingredient_count = ?,
                     ingredients_scraped_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE source_id = ?
@@ -478,6 +507,8 @@ final class Database
                 value: $ingredients,
                 flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
             ),
+            count(value: $ingredients),
+            $mappedIngredientCount,
             $sourceId
         );
     }
@@ -599,12 +630,8 @@ final class Database
                 SELECT COUNT(*)
                 FROM recipes
                 WHERE id = ?
-                  AND ingredients_json IS NOT NULL
-                  AND json_array_length(ingredients_json) > 0
-                  AND NOT EXISTS (
-                      SELECT 1 FROM json_each(recipes.ingredients_json) AS ingredient
-                      WHERE COALESCE(json_extract(ingredient.value, '$.selected.listing_id'), '') = ''
-                  )
+                  AND ingredient_count > 0
+                  AND mapped_ingredient_count = ingredient_count
             SQL
             ,
             $recipeId
@@ -670,5 +697,17 @@ final class Database
             json_encode(value: $result, flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
         );
         return (int) $this->connection->last_insert_id();
+    }
+
+    /** @param list<array<string, mixed>> $ingredients */
+    private function countMappedIngredients(array $ingredients): int
+    {
+        return count(
+            value: array_filter(
+                array: $ingredients,
+                callback: fn(mixed $ingredient): bool => is_array(value: $ingredient) &&
+                    trim(string: (string) ($ingredient['selected']['listing_id'] ?? '')) !== ''
+            )
+        );
     }
 }

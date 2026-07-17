@@ -1,9 +1,8 @@
 /.bin/
+/.config/*
+!/.config/.gitkeep
 /.data/*
 !/.data/.gitkeep
-!/.data/cookies/
-/.data/cookies/*
-!/.data/cookies/.gitkeep
 /.env
 /node_modules/
 /vendor/

@@ -71,8 +71,8 @@ final class ReweClientTest extends TestCase
     {
         $client = $this->client();
         $html = <<<'HTML'
-            <div id="plr-1"><a href="/shop/p/irrelevant/1"><img src="one.jpg"><h4>Schokolade</h4></a><script type="application/json" data-tracking-type="product">{"listingId":"listing-1","discount":true,"price":1.2}</script></div>
-            <div id="plr-2"><a href="/shop/p/kartoffeln/2"><img src="two.jpg"><h4>REWE Beste Wahl Kartoffeln festkochend</h4></a><script type="application/json" data-tracking-type="product">{"id":"listing-2","discount":false,"price":2.5}</script></div>
+            <div id="plr-1"><input type="hidden" name="listingId" value="listing-1"><a href="/shop/p/irrelevant/1"><img src="one.jpg"><h4>Schokolade</h4></a><script type="application/json" data-tracking-type="product">{"id":"product-1","discount":true,"price":1.2}</script></div>
+            <div id="plr-2"><input type="hidden" name="listingId" value="listing-2"><a href="/shop/p/kartoffeln/2"><img src="two.jpg"><h4>REWE Beste Wahl Kartoffeln festkochend</h4></a><script type="application/json" data-tracking-type="product">{"id":"product-2","discount":false,"price":2.5}</script></div>
         HTML;
 
         $products = $client->parseProducts(html: $html, query: 'Kartoffeln');
@@ -90,6 +90,28 @@ final class ReweClientTest extends TestCase
 
         $this->assertSame('basket-1', $basket['id']);
         $this->assertSame(['listing-a', 'listing-b'], $basket['listing_ids']);
+        $this->assertSame(['listing-a' => 2, 'listing-b' => 1], $basket['listing_quantities']);
+        $this->assertTrue($basket['logged_in']);
+    }
+
+    public function testCurrentBasketStateIsParsed(): void
+    {
+        $basket = $this->client()->parseBasket(
+            html: <<<'HTML'
+                <script>
+                    window.ReweBasket.id = "basket-2";
+                    window.ReweBasket.listingIdToQuantityLookup = {
+                        "listing-a": { quantity: 2, orderLimit: 15, details: { price: 279 } },
+                        "listing-b": { quantity: 1, orderLimit: 99, details: { price: 129 } },
+                    };
+                </script>
+                <script type="application/json">{&quot;isLoggedIn&quot;:true}</script>
+            HTML
+        );
+
+        $this->assertSame('basket-2', $basket['id']);
+        $this->assertSame(['listing-a', 'listing-b'], $basket['listing_ids']);
+        $this->assertSame(['listing-a' => 2, 'listing-b' => 1], $basket['listing_quantities']);
         $this->assertTrue($basket['logged_in']);
     }
 
@@ -101,6 +123,7 @@ final class ReweClientTest extends TestCase
 
         $this->assertSame('', $basket['id']);
         $this->assertSame([], $basket['listing_ids']);
+        $this->assertSame([], $basket['listing_quantities']);
         $this->assertFalse($basket['logged_in']);
     }
 

@@ -13,15 +13,18 @@ final class ReweClient
     private const BASE_URL = 'https://www.rewe.de';
     private const SEARCH_URL = self::BASE_URL . '/shop/productList';
     private const BASKET_URL = self::BASE_URL . '/shop/checkout/basket';
+    private const ACCOUNT_URL = 'https://account.rewe.de/realms/sso/account/';
     private const CACHE_TTL_SECONDS = 60 * 60 * 6;
 
     /** @var array<string, list<array<string, mixed>>> */
     private array $productsByIngredient = [];
+    private bool $shopSessionReady = false;
 
     public function __construct(
         private readonly Database $database,
         private readonly HttpClient $httpClient,
-        private readonly string $cookieFile
+        private readonly string $cookieFile,
+        private readonly ?string $cookieJarFile = null
     ) {}
 
     public function searchUrl(string $query): string
@@ -43,6 +46,7 @@ final class ReweClient
                 return $cached;
             }
         }
+        $this->ensureShopSession();
         usleep(microseconds: 500000);
         $response = $this->request(url: $this->searchUrl(query: $name));
         if ($response->status !== 200) {
@@ -67,6 +71,7 @@ final class ReweClient
         if ($recipes === []) {
             throw new RuntimeException(message: 'Dieser Woche sind keine Rezepte zugeordnet.');
         }
+        $this->ensureShopSession();
         $items = [];
         $missing = [];
         foreach ($recipes as $recipe) {
@@ -77,6 +82,7 @@ final class ReweClient
             }
             foreach ($ingredients as &$ingredient) {
                 if (!is_array(value: $ingredient)) {
+                    $missing[] = (string) $recipe['name'] . ': ungültiger Zutateneintrag';
                     continue;
                 }
                 $name = trim(string: (string) ($ingredient['name'] ?? ''));
@@ -129,18 +135,8 @@ final class ReweClient
         }
         $basket = $this->parseBasket(html: $basketResponse->body);
         if (!$basket['logged_in']) {
-            $this->request(url: self::BASE_URL . '/mydata/login');
-            $basketResponse = $this->request(url: self::BASKET_URL);
-            if ($basketResponse->status !== 200) {
-                throw new RuntimeException(
-                    message: 'Der REWE-Warenkorb antwortete mit HTTP ' . $basketResponse->status . '.'
-                );
-            }
-            $basket = $this->parseBasket(html: $basketResponse->body);
-        }
-        if (!$basket['logged_in']) {
             throw new RuntimeException(
-                message: 'Die REWE-Sitzung konnte nicht erneuert werden. Exportiere rewe-shop.json und rewe-account.json erneut.'
+                message: 'Die REWE-Shop-Sitzung ist während der Vorbereitung abgelaufen. Starte die Bestellung erneut.'
             );
         }
         if ($basket['listing_ids'] !== [] && $basket['id'] === '') {
@@ -178,7 +174,7 @@ final class ReweClient
                 body: json_encode(
                     value: [
                         'quantity' => $item['quantity'],
-                        'includeTimeslot' => false,
+                        'includeTimeslot' => true,
                         'context' => 'product-list'
                     ],
                     flags: JSON_THROW_ON_ERROR
@@ -197,7 +193,8 @@ final class ReweClient
         }
         return [
             'basket_id' => $basket['id'],
-            'removed' => count(value: $basket['listing_ids']),
+            'removed' => array_sum(array: $basket['listing_quantities']),
+            'removed_distinct' => count(value: $basket['listing_ids']),
             'added' => array_values(array: $items)
         ];
     }
@@ -230,10 +227,16 @@ final class ReweClient
                 associative: true
             );
             $tracking = is_array(value: $tracking) ? $tracking : [];
-            $listingId =
-                (string) ($tracking['listingId'] ??
-                    ($tracking['listing_id'] ??
-                        ($tracking['id'] ?? $node->getAttribute(qualifiedName: 'data-listing-id'))));
+            $listingId = trim(string: (string) ($tracking['listingId'] ?? ($tracking['listing_id'] ?? '')));
+            $listingNode = $xpath
+                ->query(expression: './/input[@name="listingId"][1]', contextNode: $node)
+                ?->item(index: 0);
+            if ($listingId === '' && $listingNode instanceof DOMElement) {
+                $listingId = trim(string: $listingNode->getAttribute(qualifiedName: 'value'));
+            }
+            if ($listingId === '') {
+                $listingId = trim(string: $node->getAttribute(qualifiedName: 'data-listing-id'));
+            }
             $discountValue = $tracking['discount'] ?? false;
             $discount =
                 $discountValue === true ||
@@ -269,7 +272,7 @@ final class ReweClient
         return array_slice(array: $products, offset: 0, length: 5);
     }
 
-    /** @return array{id: string, listing_ids: list<string>, logged_in: bool} */
+    /** @return array{id: string, listing_ids: list<string>, listing_quantities: array<string, int>, logged_in: bool} */
     public function parseBasket(string $html): array
     {
         $basketId = '';
@@ -282,7 +285,7 @@ final class ReweClient
                 break;
             }
         }
-        $listingIds = [];
+        $listingQuantities = [];
         if (
             preg_match(
                 pattern: '~listingIdToQuantityLookup\s*=\s*(\{.*?\})\s*;~s',
@@ -292,11 +295,34 @@ final class ReweClient
         ) {
             $lookup = json_decode(json: $matches[1], associative: true);
             if (is_array(value: $lookup)) {
-                $listingIds = array_values(array: array_map(callback: 'strval', array: array_keys(array: $lookup)));
+                foreach ($lookup as $listingId => $value) {
+                    $quantity = is_array(value: $value) ? (int) ($value['quantity'] ?? 0) : (int) $value;
+                    if ($quantity > 0) {
+                        $listingQuantities[(string) $listingId] = $quantity;
+                    }
+                }
+            }
+            if (
+                $listingQuantities === [] &&
+                preg_match_all(
+                    pattern: '~["\']([^"\']+)["\']\s*:\s*\{\s*["\']?quantity["\']?\s*:\s*(\d+)~',
+                    subject: $matches[1],
+                    matches: $quantityMatches,
+                    flags: PREG_SET_ORDER
+                ) > 0
+            ) {
+                foreach ($quantityMatches as $quantityMatch) {
+                    $listingQuantities[$quantityMatch[1]] = (int) $quantityMatch[2];
+                }
             }
         }
         $loggedIn = preg_match(pattern: '~(?:&quot;|")isLoggedIn(?:&quot;|")\s*:\s*true~i', subject: $html) === 1;
-        return ['id' => $basketId, 'listing_ids' => $listingIds, 'logged_in' => $loggedIn];
+        return [
+            'id' => $basketId,
+            'listing_ids' => array_keys(array: $listingQuantities),
+            'listing_quantities' => $listingQuantities,
+            'logged_in' => $loggedIn
+        ];
     }
 
     private function productScore(string $query, string $productName, bool $discount): int
@@ -342,6 +368,63 @@ final class ReweClient
         ];
     }
 
+    private function ensureShopSession(): void
+    {
+        if ($this->shopSessionReady) {
+            return;
+        }
+        $basketResponse = $this->request(url: self::BASKET_URL);
+        if ($basketResponse->status !== 200) {
+            throw new RuntimeException(
+                message: 'Der REWE-Warenkorb antwortete mit HTTP ' . $basketResponse->status . '.'
+            );
+        }
+        if ($this->parseBasket(html: $basketResponse->body)['logged_in']) {
+            $this->shopSessionReady = true;
+            return;
+        }
+
+        $this->request(url: self::ACCOUNT_URL);
+        $loginResponse = $this->request(url: self::BASE_URL . '/mydata/login');
+        if ($loginResponse->status !== 200) {
+            throw new RuntimeException(message: 'Die REWE-Anmeldung antwortete mit HTTP ' . $loginResponse->status . '.');
+        }
+        $document = new DOMDocument();
+        libxml_use_internal_errors(use_errors: true);
+        $document->loadHTML(source: $loginResponse->body);
+        libxml_clear_errors();
+        $xpath = new DOMXPath(document: $document);
+        $form = $xpath->query(expression: '//form[.//button[@name="login"]][1]')?->item(index: 0);
+        if ($form instanceof DOMElement) {
+            $action = html_entity_decode(string: trim(string: $form->getAttribute(qualifiedName: 'action')));
+            if ($action !== '') {
+                $this->request(
+                    url: $action,
+                    method: 'POST',
+                    headers: [
+                        'Content-Type: application/x-www-form-urlencoded',
+                        'Origin: https://account.rewe.de',
+                        'Referer: https://account.rewe.de/'
+                    ],
+                    body: 'login='
+                );
+            }
+        }
+
+        $basketResponse = $this->request(url: self::BASKET_URL);
+        if ($basketResponse->status !== 200) {
+            throw new RuntimeException(
+                message: 'Der REWE-Warenkorb antwortete mit HTTP ' . $basketResponse->status . '.'
+            );
+        }
+        if (!$this->parseBasket(html: $basketResponse->body)['logged_in']) {
+            throw new RuntimeException(
+                message: 'Die REWE-Sitzung konnte nicht erneuert werden. Exportiere rewe-shop.json und rewe-account.json erneut.'
+            );
+        }
+        $this->shopSessionReady = true;
+    }
+
     private function request(
         string $url,
         string $method = 'GET',
@@ -363,7 +446,7 @@ final class ReweClient
         if ($cookieHeader === '') {
             throw new RuntimeException(message: 'Keine gültigen REWE-Cookies gefunden in ' . $this->cookieFile . '.');
         }
-        $jarFile = dirname(path: $this->cookieFile, levels: 2) . '/rewe.json.jar';
+        $jarFile = $this->cookieJarFile ?? dirname(path: $this->cookieFile, levels: 2) . '/rewe.json.jar';
         $exportFiles = $this->cookieExportFiles();
         $latestExportTime = max(
             array_map(callback: fn(string $file): int => (int) filemtime(filename: $file), array: $exportFiles)
