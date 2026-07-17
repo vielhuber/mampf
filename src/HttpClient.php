@@ -158,13 +158,15 @@ final class HttpClient
             '20',
             '--max-time',
             '90',
-            '-X',
-            $method,
             '-o',
             $bodyFile,
             '-w',
             '%{http_code}|%{url_effective}'
         ];
+        if (!in_array(needle: $method, haystack: ['GET', 'POST'], strict: true)) {
+            $arguments[] = '-X';
+            $arguments[] = $method;
+        }
         if ($cookieJar !== null) {
             $arguments[] = '--cookie';
             $arguments[] = $cookieJar;
