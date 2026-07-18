@@ -376,7 +376,7 @@ if ($taskForm !== null) {
             $time.textContent = `${formatDuration(elapsed)} vergangen`;
             return;
         }
-        if (currentProgress <= 1) {
+        if (currentProgress < 1) {
             $time.textContent = `${formatDuration(elapsed)} vergangen · Restzeit wird berechnet`;
             return;
         }

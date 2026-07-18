@@ -14,12 +14,13 @@ final class ReweClient
     private const SEARCH_URL = self::BASE_URL . '/shop/productList';
     private const BASKET_URL = self::BASE_URL . '/shop/checkout/basket';
     private const ACCOUNT_URL = 'https://account.rewe.de/realms/sso/account/';
-    private const CACHE_TTL_SECONDS = 60 * 60 * 6;
-    private const SEARCH_DELAY_MIN_MICROSECONDS = 3_000_000;
-    private const SEARCH_DELAY_MAX_MICROSECONDS = 6_000_000;
-    private const SEARCH_COOLDOWN_INTERVAL = 50;
-    private const SEARCH_COOLDOWN_MIN_SECONDS = 60;
-    private const SEARCH_COOLDOWN_MAX_SECONDS = 120;
+    private const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
+    private const EMPTY_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7;
+    private const SEARCH_DELAY_MIN_MICROSECONDS = 1_500_000;
+    private const SEARCH_DELAY_MAX_MICROSECONDS = 3_000_000;
+    private const SEARCH_COOLDOWN_INTERVAL = 100;
+    private const SEARCH_COOLDOWN_MIN_SECONDS = 30;
+    private const SEARCH_COOLDOWN_MAX_SECONDS = 60;
 
     /** @var array<string, list<array<string, mixed>>> */
     private array $productsByIngredient = [];
@@ -47,7 +48,10 @@ final class ReweClient
         }
         if (!$refresh) {
             $cached = $this->database->ingredientMapping(key: $key, maxAgeSeconds: self::CACHE_TTL_SECONDS);
-            if ($cached !== null) {
+            $emptyCacheIsFresh =
+                $cached === [] &&
+                $this->database->ingredientMapping(key: $key, maxAgeSeconds: self::EMPTY_CACHE_TTL_SECONDS) !== null;
+            if ($cached !== null && ($cached !== [] || $emptyCacheIsFresh)) {
                 $this->productsByIngredient[$key] = $cached;
                 return $cached;
             }
@@ -75,6 +79,16 @@ final class ReweClient
             );
         }
         $products = $this->parseProducts(html: $response->body, query: $name);
+        if (
+            $products === [] &&
+            str_contains(haystack: $response->body, needle: '/shop/p/') &&
+            str_contains(haystack: $response->body, needle: 'Standort wählen')
+        ) {
+            throw new RuntimeException(
+                message: 'REWE hat keinen Lieferstandort gesetzt. Öffne den REWE-Shop über dieselbe IP, ' .
+                    'wähle einen Standort und exportiere rewe-shop.json erneut.'
+            );
+        }
         $this->database->saveIngredientMapping(key: $key, query: $name, products: $products);
         $this->productsByIngredient[$key] = $products;
         return $products;
