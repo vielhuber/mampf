@@ -543,9 +543,9 @@ final class Database
     {
         $sql = <<<'SQL'
             SELECT * FROM recipes
+            WHERE ingredient_count > 0
             ORDER BY
                 CASE
-                    WHEN ingredient_count = 0 THEN 0
                     WHEN mapped_ingredient_count < ingredient_count THEN 0
                     ELSE 1
                 END ASC,

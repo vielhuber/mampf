@@ -15,10 +15,16 @@ final class ReweClient
     private const BASKET_URL = self::BASE_URL . '/shop/checkout/basket';
     private const ACCOUNT_URL = 'https://account.rewe.de/realms/sso/account/';
     private const CACHE_TTL_SECONDS = 60 * 60 * 6;
+    private const SEARCH_DELAY_MIN_MICROSECONDS = 3_000_000;
+    private const SEARCH_DELAY_MAX_MICROSECONDS = 6_000_000;
+    private const SEARCH_COOLDOWN_INTERVAL = 50;
+    private const SEARCH_COOLDOWN_MIN_SECONDS = 60;
+    private const SEARCH_COOLDOWN_MAX_SECONDS = 120;
 
     /** @var array<string, list<array<string, mixed>>> */
     private array $productsByIngredient = [];
     private bool $shopSessionReady = false;
+    private int $networkSearchCount = 0;
 
     public function __construct(
         private readonly Database $database,
@@ -47,7 +53,21 @@ final class ReweClient
             }
         }
         $this->ensureShopSession();
-        usleep(microseconds: 500000);
+        $this->networkSearchCount++;
+        if ($this->networkSearchCount % self::SEARCH_COOLDOWN_INTERVAL === 0) {
+            sleep(
+                seconds: random_int(
+                    min: self::SEARCH_COOLDOWN_MIN_SECONDS,
+                    max: self::SEARCH_COOLDOWN_MAX_SECONDS
+                )
+            );
+        }
+        usleep(
+            microseconds: random_int(
+                min: self::SEARCH_DELAY_MIN_MICROSECONDS,
+                max: self::SEARCH_DELAY_MAX_MICROSECONDS
+            )
+        );
         $response = $this->request(url: $this->searchUrl(query: $name));
         if ($response->status !== 200) {
             throw new RuntimeException(

@@ -1021,7 +1021,7 @@ final class Application
         $ingredientOptions =
             $this->option(value: 'mapped', label: 'Zutaten zugeordnet', selected: $ingredientFilter) .
             $this->option(value: 'unmapped', label: 'Zutaten unvollständig', selected: $ingredientFilter) .
-            $this->option(value: 'all', label: 'Alle Rezepte anzeigen', selected: $ingredientFilter);
+            $this->option(value: 'all', label: 'Alle Rezepte', selected: $ingredientFilter);
         $weekOptions =
             $this->option(value: 'all', label: 'Alle Rezepte', selected: $weekFilter) .
             $this->option(value: 'selected', label: 'Ausgewählte Rezepte', selected: $weekFilter) .

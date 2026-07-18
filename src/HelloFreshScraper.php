@@ -130,10 +130,12 @@ final class HelloFreshScraper
                 }
                 $name = trim(string: (string) ($item['name'] ?? ''));
                 $imageUrl = $this->imageUrl(recipe: $item);
+                $ingredients = $this->ingredientDefinitions(recipe: $item);
                 if (
                     ($item['isAddon'] ?? false) === true ||
                     $name === '' ||
                     $imageUrl === null ||
+                    $ingredients === [] ||
                     $this->isTestRecipe(name: $name) ||
                     $this->imageIsMissing(imageUrl: $imageUrl, responses: $imageResponses)
                 ) {
@@ -156,7 +158,7 @@ final class HelloFreshScraper
                 );
                 $this->database->updateIngredientDefinitions(
                     sourceId: $sourceId,
-                    ingredients: $this->ingredientDefinitions(recipe: $item)
+                    ingredients: $ingredients
                 );
                 $isNew ? $created++ : $updated++;
                 unset($publicRecipes[$sourceId]);
@@ -211,10 +213,12 @@ final class HelloFreshScraper
                 foreach ($detailItems as $sourceId => $item) {
                     $name = trim(string: (string) ($item['name'] ?? ''));
                     $imageUrl = $this->imageUrl(recipe: $item);
+                    $ingredients = $this->ingredientDefinitions(recipe: $item);
                     if (
                         ($item['isAddon'] ?? false) === true ||
                         $name === '' ||
                         $imageUrl === null ||
+                        $ingredients === [] ||
                         $this->isTestRecipe(name: $name) ||
                         $this->imageIsMissing(imageUrl: $imageUrl, responses: $imageResponses)
                     ) {
@@ -237,7 +241,7 @@ final class HelloFreshScraper
                     );
                     $this->database->updateIngredientDefinitions(
                         sourceId: $sourceId,
-                        ingredients: $this->ingredientDefinitions(recipe: $item)
+                        ingredients: $ingredients
                     );
                     $isNew ? $created++ : $updated++;
                     unset($publicRecipes[$sourceId]);

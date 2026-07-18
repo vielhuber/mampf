@@ -73,6 +73,20 @@ final class DatabaseTest extends TestCase
         unlink(filename: $path);
     }
 
+    public function testRecipesWithoutIngredientsAreExcludedFromMapping(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $database = new Database(path: $path);
+        $database->upsertRecipe('abc', 'First', 'image', 'https://example.org/abc', null);
+
+        $this->assertSame([], $database->recipesForIngredientMapping());
+
+        $recipeId = (int) $database->recipes('', 1, 10, 2026, 29)[0]['id'];
+        $database->updateIngredients(recipeId: $recipeId, ingredients: [['name' => 'Kartoffeln']]);
+        $this->assertCount(1, $database->recipesForIngredientMapping());
+        unlink(filename: $path);
+    }
+
     public function testRecipesCanBeFilteredAndSorted(): void
     {
         $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
