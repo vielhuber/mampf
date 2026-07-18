@@ -285,6 +285,7 @@ final class HelloFreshScraper
                         message: 'Keine HelloFresh-Zutaten vorhanden. Bitte zuerst die Rezepte aktualisieren.'
                     );
                 }
+                $ingredientsChanged = false;
                 foreach ($ingredients as &$ingredient) {
                     $checkpoint?->__invoke();
                     if (!is_array(value: $ingredient)) {
@@ -309,11 +310,16 @@ final class HelloFreshScraper
                     if ($ingredient === $previousIngredient) {
                         continue;
                     }
-                    $this->database->updateIngredients(recipeId: (int) $recipe['id'], ingredients: $ingredients);
+                    $ingredientsChanged = true;
                 }
                 unset($ingredient);
+                if ($ingredientsChanged) {
+                    $this->database->updateIngredients(recipeId: (int) $recipe['id'], ingredients: $ingredients);
+                }
                 $processed++;
-                $progress?->__invoke((string) $recipe['name'], true, $processed, count(value: $recipes));
+                if ($processed % 10 === 0 || $processed === count(value: $recipes)) {
+                    $progress?->__invoke((string) $recipe['name'], true, $processed, count(value: $recipes));
+                }
             } catch (TaskCancelledException $exception) {
                 throw $exception;
             } catch (RuntimeException $exception) {

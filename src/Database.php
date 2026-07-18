@@ -544,11 +544,8 @@ final class Database
         $sql = <<<'SQL'
             SELECT * FROM recipes
             WHERE ingredient_count > 0
+              AND mapped_ingredient_count < ingredient_count
             ORDER BY
-                CASE
-                    WHEN mapped_ingredient_count < ingredient_count THEN 0
-                    ELSE 1
-                END ASC,
                 COALESCE(ingredients_scraped_at, '') ASC,
                 created_at ASC,
                 id ASC

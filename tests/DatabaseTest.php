@@ -156,7 +156,7 @@ final class DatabaseTest extends TestCase
         $this->assertSame('Beta', $popular[0]['name']);
         $this->assertSame('Alpha', $italian[0]['name']);
         $this->assertSame('Alpha', $mappingRecipes[0]['name']);
-        $this->assertCount(2, $mappingRecipes);
+        $this->assertCount(1, $mappingRecipes);
         $this->assertSame(3, $database->mappedIngredientCount('', 2026, 29));
         $this->assertSame(1, $database->mappedIngredientCount('Alpha', 2026, 29));
         $this->assertSame(2, $database->mappedIngredientCount('', 2026, 29, ingredientFilter: 'mapped'));

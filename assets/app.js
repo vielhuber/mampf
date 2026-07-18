@@ -358,6 +358,9 @@ if ($taskForm !== null) {
     let controller = new AbortController();
     let startedAt = performance.now();
     let currentProgress = 1;
+    let sampledProgress = 0;
+    let sampledAt = startedAt;
+    let progressSamples = [];
     let cancellationSent = false;
     let terminal = false;
     let formatDuration = seconds => {
@@ -376,16 +379,29 @@ if ($taskForm !== null) {
             $time.textContent = `${formatDuration(elapsed)} vergangen`;
             return;
         }
-        if (currentProgress < 1) {
+        if (progressSamples.length === 0) {
             $time.textContent = `${formatDuration(elapsed)} vergangen · Restzeit wird berechnet`;
             return;
         }
-        let remaining = (elapsed / currentProgress) * (100 - currentProgress);
+        let sortedSamples = [...progressSamples].sort((first, second) => first - second);
+        let secondsPerPercent = sortedSamples[Math.floor(sortedSamples.length / 2)];
+        let remaining = secondsPerPercent * (100 - currentProgress);
         $time.textContent = `${formatDuration(elapsed)} vergangen · Restzeit ca. ${formatDuration(remaining)}`;
     };
     let timeInterval = window.setInterval(updateTime, 1000);
     let applyUpdate = update => {
-        currentProgress = Math.max(1, Math.min(100, Number(update.progress) || 1));
+        let nextProgress = Math.max(1, Math.min(100, Number(update.progress) || 1));
+        let now = performance.now();
+        if (sampledProgress === 0) {
+            sampledProgress = nextProgress;
+            sampledAt = now;
+        } else if (nextProgress > sampledProgress) {
+            progressSamples.push((now - sampledAt) / 1000 / (nextProgress - sampledProgress));
+            progressSamples = progressSamples.slice(-3);
+            sampledProgress = nextProgress;
+            sampledAt = now;
+        }
+        currentProgress = nextProgress;
         $progress.style.width = `${currentProgress}%`;
         $percentage.textContent = `${currentProgress} %`;
         $status.textContent = update.message || 'Vorgang läuft.';
