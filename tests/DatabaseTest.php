@@ -73,6 +73,34 @@ final class DatabaseTest extends TestCase
         unlink(filename: $path);
     }
 
+    public function testRecipesAssignedToOtherWeeksAreSortedAfterUnassignedRecipes(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $database = new Database(path: $path);
+        $database->upsertRecipe('current', 'Current week', 'image', 'https://example.org/current', null, 0);
+        $database->upsertRecipe('unused', 'Never used', 'image', 'https://example.org/unused', null, 1);
+        $database->upsertRecipe('other', 'Other week', 'image', 'https://example.org/other', null, 100);
+
+        $recipes = $database->recipes('', 1, 10, 2026, 29, sort: 'name_asc');
+        foreach ($recipes as $recipe) {
+            $database->updateIngredients(
+                recipeId: (int) $recipe['id'],
+                ingredients: [['name' => 'Kartoffeln', 'selected' => ['listing_id' => 'product-1']]]
+            );
+        }
+        $recipeIds = array_column(array: $recipes, column_key: 'id', index_key: 'source_id');
+        $database->assignRecipe(recipeId: (int) $recipeIds['current'], year: 2026, week: 29);
+        $database->assignRecipe(recipeId: (int) $recipeIds['other'], year: 2026, week: 30);
+
+        $sortedRecipes = $database->recipes('', 1, 10, 2026, 29);
+
+        $this->assertSame(
+            ['Current week', 'Never used', 'Other week'],
+            array_column(array: $sortedRecipes, column_key: 'name')
+        );
+        unlink(filename: $path);
+    }
+
     public function testRecipesWithoutIngredientsAreExcludedFromMapping(): void
     {
         $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';

@@ -109,6 +109,7 @@ final class Database
 
                 CREATE INDEX IF NOT EXISTS recipes_name ON recipes(name);
                 CREATE INDEX IF NOT EXISTS week_recipes_week ON week_recipes(year, week);
+                CREATE INDEX IF NOT EXISTS week_recipes_recipe ON week_recipes(recipe_id);
                 CREATE INDEX IF NOT EXISTS recipe_ratings_recipe ON recipe_ratings(recipe_id);
             SQL
         );
@@ -350,7 +351,13 @@ final class Database
                       SELECT 1 FROM json_each(recipes.categories_json) AS recipe_category
                       WHERE recipe_category.value = ? COLLATE NOCASE
                   ))
-                ORDER BY selected DESC, {$secondaryOrder}
+                ORDER BY
+                    selected DESC,
+                    EXISTS (
+                        SELECT 1 FROM week_recipes AS assigned_week
+                        WHERE assigned_week.recipe_id = recipes.id
+                    ) ASC,
+                    {$secondaryOrder}
                 LIMIT ? OFFSET ?
             SQL
             ,
