@@ -60,13 +60,7 @@ final class Application
         $category = trim(string: (string) ($_GET['category'] ?? ''));
         $sortValue = (string) ($_GET['sort'] ?? 'favorites_desc');
         $sort = match ($sortValue) {
-            'favorites_desc',
-            'ratings_desc',
-            'rating_desc',
-            'name_asc',
-            'name_desc',
-            'created_desc'
-                => $sortValue,
+            'favorites_desc', 'ratings_desc', 'rating_desc', 'name_asc', 'name_desc', 'created_desc' => $sortValue,
             default => 'favorites_desc'
         };
         $partial = (string) ($_GET['partial'] ?? '') === '1';
@@ -172,9 +166,11 @@ final class Application
         $startedAt = microtime(as_float: true);
         $statusCode = 200;
         $response = [];
+        $activeSyncType = null;
         try {
             $appendLog('START', 'Aktualisierung gestartet.');
             $appendLog('INFO', 'HelloFresh-Rezepte werden aktualisiert.');
+            $activeSyncType = Database::SYNC_RECIPES;
             $recipes = $this->runtime->helloFreshScraper->scrapeRecipes(
                 progress: static function (int $scanned, int $total, int $created, int $updated) use (
                     $appendLog
@@ -191,7 +187,21 @@ final class Application
                     );
                 }
             );
-            $this->runtime->database->recordSyncRun(type: Database::SYNC_RECIPES);
+            $recipeSyncStatus =
+                $recipes['unresolved'] === 0 ? Database::SYNC_STATUS_SUCCESS : Database::SYNC_STATUS_ERROR;
+            $recipeSyncMessage = sprintf(
+                '%d neue, %d aktualisierte, %d ausgefilterte und %d nicht aufgelöste Rezepte.',
+                $recipes['created'],
+                $recipes['updated'],
+                $recipes['filtered'],
+                $recipes['unresolved']
+            );
+            $this->runtime->database->recordSyncRun(
+                type: Database::SYNC_RECIPES,
+                status: $recipeSyncStatus,
+                message: $recipeSyncMessage
+            );
+            $activeSyncType = null;
             $appendLog(
                 'INFO',
                 sprintf(
@@ -203,6 +213,7 @@ final class Application
                 )
             );
             $appendLog('INFO', 'REWE-Zutaten werden zugeordnet.');
+            $activeSyncType = Database::SYNC_INGREDIENTS;
             $ingredients = $this->runtime->helloFreshScraper->scrapeIngredients(
                 reweClient: $this->runtime->reweClient,
                 progress: static function (
@@ -222,7 +233,14 @@ final class Application
                     $appendLog('INFO', sprintf('Zutaten: %d/%d Rezepte verarbeitet.', $current, $total));
                 }
             );
-            $this->runtime->database->recordSyncRun(type: Database::SYNC_INGREDIENTS);
+            $ingredientSyncStatus =
+                $ingredients['failed'] === 0 ? Database::SYNC_STATUS_SUCCESS : Database::SYNC_STATUS_ERROR;
+            $this->runtime->database->recordSyncRun(
+                type: Database::SYNC_INGREDIENTS,
+                status: $ingredientSyncStatus,
+                message: $this->ingredientSyncMessage(result: $ingredients)
+            );
+            $activeSyncType = null;
             if ($ingredients['errors'] !== []) {
                 foreach ($ingredients['errors'] as $error) {
                     $appendLog('ERROR', $error);
@@ -249,6 +267,16 @@ final class Application
         } catch (RuntimeException | JsonException | PDOException $exception) {
             $statusCode = 500;
             $response = ['status' => 'error', 'error' => $exception->getMessage()];
+            if ($activeSyncType !== null) {
+                try {
+                    $this->runtime->database->recordSyncRun(
+                        type: $activeSyncType,
+                        status: Database::SYNC_STATUS_ERROR,
+                        message: $exception->getMessage()
+                    );
+                } catch (RuntimeException | PDOException) {
+                }
+            }
             try {
                 $appendLog('ERROR', $exception->getMessage());
             } catch (RuntimeException) {
@@ -463,6 +491,11 @@ final class Application
         $action = (string) $task['action'];
         $year = (int) $task['year'];
         $week = (int) $task['week'];
+        $activeSyncType = match ($action) {
+            'scrape-recipes' => Database::SYNC_RECIPES,
+            'scrape-ingredients' => Database::SYNC_INGREDIENTS,
+            default => null
+        };
         $taskProgress = 1;
         $cancellationPath = $this->taskCancellationPath(taskId: $taskId);
         register_shutdown_function(function () use ($cancellationPath): void {
@@ -491,7 +524,6 @@ final class Application
                         $this->ensureTaskIsActive(taskId: $taskId);
                     }
                 );
-                $this->runtime->database->recordSyncRun(type: Database::SYNC_RECIPES);
                 $message = sprintf(
                     'HelloFresh aktualisiert: %d neue, %d vorhandene, %d ausgefilterte und %d nicht aufgelöste Rezepte.',
                     $result['created'],
@@ -499,6 +531,13 @@ final class Application
                     $result['filtered'],
                     $result['unresolved']
                 );
+                $completionType = $result['unresolved'] === 0 ? 'success' : 'error';
+                $this->runtime->database->recordSyncRun(
+                    type: Database::SYNC_RECIPES,
+                    status: $completionType === 'success' ? Database::SYNC_STATUS_SUCCESS : Database::SYNC_STATUS_ERROR,
+                    message: $message
+                );
+                $activeSyncType = null;
             }
             if ($action === 'scrape-ingredients') {
                 $result = $this->runtime->helloFreshScraper->scrapeIngredients(
@@ -516,7 +555,6 @@ final class Application
                         $this->ensureTaskIsActive(taskId: $taskId);
                     }
                 );
-                $this->runtime->database->recordSyncRun(type: Database::SYNC_INGREDIENTS);
                 $message = sprintf(
                     '%d Rezepte zugeordnet, %d fehlgeschlagen.',
                     $result['processed'],
@@ -526,6 +564,12 @@ final class Application
                     $message .= ' ' . implode(separator: ' ', array: $result['errors']);
                 }
                 $completionType = $result['failed'] === 0 ? 'success' : 'error';
+                $this->runtime->database->recordSyncRun(
+                    type: Database::SYNC_INGREDIENTS,
+                    status: $completionType === 'success' ? Database::SYNC_STATUS_SUCCESS : Database::SYNC_STATUS_ERROR,
+                    message: $this->ingredientSyncMessage(result: $result)
+                );
+                $activeSyncType = null;
             }
             if ($action === 'order') {
                 $result = $this->runtime->reweClient->orderWeek(
@@ -551,6 +595,16 @@ final class Application
                 returnUrl: (string) $task['return_url']
             );
         } catch (TaskCancelledException) {
+            if ($activeSyncType !== null) {
+                try {
+                    $this->runtime->database->recordSyncRun(
+                        type: $activeSyncType,
+                        status: Database::SYNC_STATUS_CANCELLED,
+                        message: 'Der Lauf wurde manuell gestoppt.'
+                    );
+                } catch (RuntimeException | PDOException) {
+                }
+            }
             $this->sendProgress(
                 progress: $taskProgress,
                 message: 'Vorgang wurde gestoppt.',
@@ -558,6 +612,16 @@ final class Application
                 returnUrl: (string) $task['return_url']
             );
         } catch (RuntimeException $exception) {
+            if ($activeSyncType !== null) {
+                try {
+                    $this->runtime->database->recordSyncRun(
+                        type: $activeSyncType,
+                        status: Database::SYNC_STATUS_ERROR,
+                        message: $exception->getMessage()
+                    );
+                } catch (RuntimeException | PDOException) {
+                }
+            }
             if ($action === 'order') {
                 $this->runtime->database->saveOrder(
                     year: $year,
@@ -799,9 +863,68 @@ final class Application
     ): never {
         $assets = $this->assets();
         $csrf = $this->escape(value: $this->csrfToken());
-        $syncRunTimes = $this->runtime->database->syncRunTimes();
-        $recipesRunTime = $this->formatSyncRunTime(timestamp: $syncRunTimes[Database::SYNC_RECIPES]);
-        $ingredientsRunTime = $this->formatSyncRunTime(timestamp: $syncRunTimes[Database::SYNC_INGREDIENTS]);
+        $syncRuns = $this->runtime->database->syncRuns();
+        $syncStatusHtml = '';
+        foreach (
+            [
+                Database::SYNC_RECIPES => ['label' => 'Rezepte', 'name' => 'Rezept-Scrape'],
+                Database::SYNC_INGREDIENTS => ['label' => 'Zutaten', 'name' => 'Zutaten-Scrape']
+            ]
+            as $syncType => $syncConfig
+        ) {
+            $syncRun = $syncRuns[$syncType];
+            $syncCompletedAt = $syncRun['completed_at'];
+            $syncStatus = $syncCompletedAt === null ? '' : $syncRun['status'];
+            $syncStatusLabel = match ($syncStatus) {
+                Database::SYNC_STATUS_SUCCESS => 'erfolgreich',
+                Database::SYNC_STATUS_ERROR => 'fehlgeschlagen',
+                Database::SYNC_STATUS_CANCELLED => 'abgebrochen',
+                default => 'noch nie'
+            };
+            $syncStatusStyle = match ($syncStatus) {
+                Database::SYNC_STATUS_SUCCESS => 'text-emerald-700',
+                Database::SYNC_STATUS_ERROR => 'text-red-700',
+                Database::SYNC_STATUS_CANCELLED => 'text-amber-700',
+                default => 'text-stone-400'
+            };
+            $syncStatusIcon = match ($syncStatus) {
+                Database::SYNC_STATUS_SUCCESS => 'success',
+                Database::SYNC_STATUS_ERROR => 'error',
+                default => 'info'
+            };
+            $syncTitle =
+                $syncStatus === ''
+                    ? 'Noch kein ' . $syncConfig['name']
+                    : 'Letzter ' . $syncConfig['name'] . ' ' . $syncStatusLabel;
+            $syncMessage = trim(string: $syncRun['message']);
+            if ($syncMessage === '') {
+                $syncMessage =
+                    $syncStatus === Database::SYNC_STATUS_SUCCESS
+                        ? 'Der letzte Lauf wurde ohne Fehler abgeschlossen.'
+                        : 'Es ist noch kein Ergebnis vorhanden.';
+            }
+            $syncText =
+                $syncConfig['label'] .
+                ': ' .
+                ($syncCompletedAt === null
+                    ? 'noch nie'
+                    : $this->formatSyncRunTime(timestamp: $syncCompletedAt) . ' · ' . $syncStatusLabel);
+            if ($syncStatusHtml !== '') {
+                $syncStatusHtml .= '<span class="text-stone-300"> · </span>';
+            }
+            $syncStatusHtml .=
+                '<button type="button" data-sync-status data-sync-title="' .
+                $this->escape(value: $syncTitle) .
+                '" data-sync-message="' .
+                $this->escape(value: $syncMessage) .
+                '" data-sync-icon="' .
+                $syncStatusIcon .
+                '" class="' .
+                $syncStatusStyle .
+                '">' .
+                $this->escape(value: $syncText) .
+                '</button>';
+        }
         $searchValue = $this->escape(value: $search);
         $filterFields =
             '<input type="hidden" name="search" value="' .
@@ -890,9 +1013,7 @@ final class Application
                     '"></i></button>';
             }
             $noteStyle =
-                $note === ''
-                    ? 'text-stone-400 hover:text-stone-700'
-                    : 'text-emerald-700 hover:text-emerald-900';
+                $note === '' ? 'text-stone-400 hover:text-stone-700' : 'text-emerald-700 hover:text-emerald-900';
             $noteTitle = $note === '' ? 'Notiz hinzufügen' : 'Notiz bearbeiten';
             $ratingSummaryHtml = $this->ratingSummaryHtml(summary: $ratingSummary);
             $noteHtml = $this->escape(value: $note);
@@ -971,16 +1092,16 @@ final class Application
             }
             $recipeHtml .= <<<HTML
                 <article data-recipe-id="{$id}" class="overflow-hidden rounded-lg border border-stone-200 bg-white">
-                    <a href="{$sourceUrl}" target="_blank" rel="noopener noreferrer" class="block aspect-[4/3] overflow-hidden bg-stone-100">
+                    <a href="{$sourceUrl}" target="_blank" rel="noopener noreferrer" class="block aspect-[2/1] overflow-hidden bg-stone-100 sm:aspect-[4/3]">
                         <img src="{$imageUrl}" alt="{$name}" loading="lazy" class="size-full object-cover transition duration-200 hover:scale-[1.02]">
                     </a>
-                    <div class="p-4">
-                        <div class="flex min-h-12 items-start gap-2"><h2 class="line-clamp-2 flex-1 text-base font-semibold leading-6"><a href="{$sourceUrl}" target="_blank" rel="noopener noreferrer" class="hover:text-emerald-700 hover:underline">{$name}</a></h2>{$pdfLink}</div>
-                        <div class="mt-2 flex min-h-5 items-center justify-between gap-3">
+                    <div class="p-3 sm:p-4">
+                        <div class="flex items-start gap-2 sm:min-h-12"><h2 class="line-clamp-2 flex-1 text-sm font-semibold leading-5 sm:text-base sm:leading-6"><a href="{$sourceUrl}" target="_blank" rel="noopener noreferrer" class="hover:text-emerald-700 hover:underline">{$name}</a></h2>{$pdfLink}</div>
+                        <div class="mt-0.5 flex min-h-5 items-center justify-between gap-3 sm:mt-2">
                             {$status}
                             <span class="flex shrink-0 items-center gap-2 text-xs text-stone-500"><span title="{$favoritesCount} Favoriten" class="inline-flex items-center gap-1"><i data-lucide="heart" class="size-3.5"></i>{$favoritesCount}</span><span title="{$ratingsCount} Bewertungen" class="inline-flex items-center gap-1"><i data-lucide="star" class="size-3.5"></i>{$averageRating}</span></span>
                         </div>
-                        <div class="mt-2 flex min-h-5 items-center justify-between gap-3 border-t border-stone-100 pt-2">
+                        <div class="mt-1.5 flex min-h-5 items-center justify-between gap-3 border-t border-stone-100 pt-1.5 sm:mt-2 sm:pt-2">
                             <div data-rating-picker class="flex items-center" aria-label="Eigene Bewertung">{$ratingButtons}</div>
                             <div class="flex items-center gap-2">
                                 <span data-rating-summary class="relative -top-px">{$ratingSummaryHtml}</span>
@@ -988,9 +1109,9 @@ final class Application
                                 <template data-note-template>{$noteHtml}</template>
                             </div>
                         </div>
-                        <form method="post" class="mt-4">
+                        <form method="post" class="mt-3 sm:mt-4">
                             <input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="{$action}"><input type="hidden" name="recipe_id" value="{$id}"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}
-                            <button type="submit" title="{$buttonTitle}" class="flex w-full items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium {$buttonStyle}"{$buttonDisabled}><i data-lucide="{$buttonIcon}" class="size-4"></i>{$buttonText}</button>
+                            <button type="submit" title="{$buttonTitle}" class="flex w-full items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium sm:py-2 {$buttonStyle}"{$buttonDisabled}><i data-lucide="{$buttonIcon}" class="size-4"></i>{$buttonText}</button>
                         </form>
                     </div>
                 </article>
@@ -1027,7 +1148,6 @@ final class Application
             $this->option(value: 'selected', label: 'Ausgewählte Rezepte', selected: $weekFilter) .
             $this->option(value: 'unselected', label: 'Nicht ausgewählte Rezepte', selected: $weekFilter);
         $weekTiles = '';
-        $mobileWeekOptions = '';
         $weekCounts = $this->runtime->database->weekRecipeCounts();
         $now = new DateTimeImmutable(datetime: 'now');
         $currentWeekStart = $now->setISODate(
@@ -1071,28 +1191,15 @@ final class Application
                 $tileWeek .
                 ', ' .
                 $tileYear .
-                '" class="flex w-[5.25rem] shrink-0 flex-col items-center rounded-md border px-2 py-1.5 text-center ' .
+                '" class="flex w-[4.75rem] shrink-0 flex-col items-center rounded-md border px-1 py-1 text-center lg:w-[5.25rem] lg:px-2 lg:py-1.5 ' .
                 $tileStyle .
-                '"><span class="text-[10px] leading-3 opacity-75">' .
+                '"><span class="whitespace-nowrap text-[9px] leading-3 opacity-75 lg:text-[10px]">' .
                 $dateLabel .
-                '</span><strong class="mt-0.5 text-sm leading-4">KW ' .
+                '</span><strong class="text-xs leading-4 lg:mt-0.5 lg:text-sm">KW ' .
                 $tileWeek .
-                '</strong><span class="mt-0.5 text-[10px] leading-3 opacity-80">' .
+                '</strong><span class="text-[9px] leading-3 opacity-80 lg:mt-0.5 lg:text-[10px]">' .
                 $tileCountLabel .
                 '</span></a>';
-            $mobileWeekOptions .=
-                '<option value="/?' .
-                $tileQuery .
-                '"' .
-                ($isActiveWeek ? ' selected' : '') .
-                '>KW ' .
-                $tileWeek .
-                ' · ' .
-                $dateLabel .
-                ' · ' .
-                $tileCountLabel .
-                ($weekOffset === 0 ? ' · aktuell' : '') .
-                '</option>';
         }
         $sortOptions =
             $this->option(value: 'favorites_desc', label: 'Beliebteste', selected: $sort) .
@@ -1105,6 +1212,11 @@ final class Application
         foreach ($this->runtime->database->categories() as $categoryName) {
             $categoryOptions .= $this->option(value: $categoryName, label: $categoryName, selected: $category);
         }
+        $selectedWeekStart = new DateTimeImmutable(datetime: 'now')->setISODate(year: $year, week: $week);
+        $selectedWeekDateLabel =
+            $selectedWeekStart->format(format: 'd.m.y') .
+            '-' .
+            $selectedWeekStart->modify(modifier: '+6 days')->format(format: 'd.m.y');
         $orderDisabled = $weekRecipeCount === 0 ? ' disabled aria-disabled="true"' : '';
         $orderTitle =
             $weekRecipeCount === 0
@@ -1145,40 +1257,39 @@ final class Application
             </head>
             <body data-csrf="{$csrf}" class="min-h-screen bg-stone-50 text-stone-950">
                 <header class="border-b border-stone-200 bg-white">
-                    <div class="mx-auto grid max-w-screen-2xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-3 py-3 lg:grid-cols-[1fr_auto_1fr] lg:px-5">
-                        <a href="/" class="flex items-center gap-3 justify-self-start"><span class="grid size-9 place-items-center rounded-md bg-emerald-700 text-white"><i data-lucide="utensils" class="size-5"></i></span><span class="hidden text-lg font-semibold sm:inline">mampf</span></a>
-                        <nav aria-label="Kalenderwoche auswählen" class="mx-auto hidden max-w-full gap-1.5 overflow-x-auto px-1 py-1 lg:flex">{$weekTiles}</nav>
-                        <label class="relative mx-auto block w-full max-w-44 lg:hidden"><i data-lucide="calendar-days" class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-stone-500"></i><select data-week-select aria-label="Kalenderwoche auswählen" class="h-9 w-full appearance-none rounded-md border border-stone-300 bg-white py-1 pl-8 pr-7 text-xs font-medium outline-none focus:border-emerald-700">{$mobileWeekOptions}</select><i data-lucide="chevron-down" class="pointer-events-none absolute right-2 top-2.5 size-4 text-stone-500"></i></label>
-                        <div class="grid justify-items-end gap-1 justify-self-end">
+                    <div class="mx-auto grid max-w-screen-2xl grid-cols-1 items-center py-2 lg:grid-cols-[1fr_auto_1fr] lg:gap-2 lg:px-5 lg:py-3">
+                        <a href="/" class="hidden items-center gap-3 justify-self-start lg:flex"><span class="grid size-9 place-items-center rounded-md bg-emerald-700 text-white"><i data-lucide="utensils" class="size-5"></i></span><span class="text-lg font-semibold">mampf</span></a>
+                        <nav aria-label="Kalenderwoche auswählen" class="mx-auto flex w-full min-w-0 max-w-full gap-1 overflow-x-auto px-2 py-0.5 lg:gap-1.5 lg:px-1 lg:py-1">{$weekTiles}</nav>
+                        <div class="hidden justify-items-end gap-1 justify-self-end lg:grid">
                             <div class="flex items-center gap-1">
-                                <form method="post" action="/task" data-confirm-title="Rezepte aktualisieren?" data-confirm="Alle HelloFresh-Rezepte, Zutaten für drei Portionen und PDF-Links werden aktualisiert." data-confirm-button="Aktualisieren"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-recipes"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Rezepte aktualisieren" aria-label="Rezepte aktualisieren" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="refresh-cw" class="size-4"></i></button></form>
-                                <form method="post" action="/task" data-confirm-title="Zutaten zuordnen?" data-confirm="Alle fehlenden und veralteten REWE-Produktzuordnungen werden geprüft und aktualisiert." data-confirm-button="Zuordnen"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-ingredients"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Zutaten zuordnen" aria-label="Zutaten zuordnen" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="scan-search" class="size-4"></i></button></form>
-                                <form method="post" data-confirm-title="Alles zurücksetzen?" data-confirm="Alle Rezepte, Zutatenzuordnungen, Bewertungen, Notizen und Bestellungen werden unwiderruflich gelöscht." data-confirm-button="SICHER LÖSCHEN" data-confirm-icon="error" data-confirm-input="DELETE"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="reset"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Alle Rezeptdaten löschen" aria-label="Alle Rezeptdaten löschen" class="grid size-8 place-items-center rounded-md border border-red-200 text-red-700 hover:bg-red-50"><i data-lucide="trash-2" class="size-4"></i></button></form>
-                                <button data-theme-toggle type="button" title="Dark Mode aktivieren" aria-label="Dark Mode aktivieren" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="moon" class="size-4"></i></button>
+                                <form method="post" action="/task" data-confirm-title="Rezepte aktualisieren?" data-confirm="Alle HelloFresh-Rezepte, Zutaten für drei Portionen und PDF-Links werden aktualisiert." data-confirm-button="Aktualisieren" class="hidden lg:block"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-recipes"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Rezepte aktualisieren" aria-label="Rezepte aktualisieren" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="refresh-cw" class="size-4"></i></button></form>
+                                <form method="post" action="/task" data-confirm-title="Zutaten zuordnen?" data-confirm="Alle fehlenden und veralteten REWE-Produktzuordnungen werden geprüft und aktualisiert." data-confirm-button="Zuordnen" class="hidden lg:block"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-ingredients"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Zutaten zuordnen" aria-label="Zutaten zuordnen" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="scan-search" class="size-4"></i></button></form>
+                                <form method="post" data-confirm-title="Alles zurücksetzen?" data-confirm="Alle Rezepte, Zutatenzuordnungen, Bewertungen, Notizen und Bestellungen werden unwiderruflich gelöscht." data-confirm-button="SICHER LÖSCHEN" data-confirm-icon="error" data-confirm-input="DELETE" class="hidden lg:block"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="reset"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Alle Rezeptdaten löschen" aria-label="Alle Rezeptdaten löschen" class="grid size-8 place-items-center rounded-md border border-red-200 text-red-700 hover:bg-red-50"><i data-lucide="trash-2" class="size-4"></i></button></form>
+                                <button data-theme-toggle type="button" title="Dark Mode aktivieren" aria-label="Dark Mode aktivieren" class="hidden size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100 lg:grid"><i data-lucide="moon" class="size-4"></i></button>
                                 <button data-logout type="button" title="Abmelden" aria-label="Abmelden" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="log-out" class="size-4"></i></button>
                             </div>
-                            <p class="whitespace-nowrap text-[10px] leading-3 text-stone-400" title="Letzte vollständig abgeschlossene Läufe">Rezepte: {$recipesRunTime} · Zutaten: {$ingredientsRunTime}</p>
+                            <div class="hidden items-center whitespace-nowrap text-[10px] leading-3 lg:flex">{$syncStatusHtml}</div>
                         </div>
                     </div>
                 </header>
                 {$flashHtml}
                 <main>
                     <section class="border-b border-stone-200 bg-white">
-                        <div class="mx-auto grid max-w-screen-2xl gap-5 px-5 py-6 lg:grid-cols-[1fr_auto] lg:items-end">
-                            <div><p class="text-sm font-medium leading-5 text-emerald-700">Woche <span class="tabular-nums">{$week}</span> · <span class="tabular-nums">{$year}</span></p><div class="mt-1 text-sm text-stone-500"><span><strong class="text-stone-900">{$total}</strong> Rezepte</span></div></div>
-                            <div class="flex flex-wrap gap-2">
-                                <form method="post" action="/task" data-confirm-title="Woche {$week} bestellen?" data-confirm="Der aktuelle REWE-Warenkorb wird vollständig geleert und durch die Zutaten dieser Woche ersetzt." data-confirm-button="Jetzt bestellen!"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="order"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="{$orderTitle}" class="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium {$orderStyle}"{$orderDisabled}><i data-lucide="shopping-cart" class="size-4"></i>Produkte dieser Woche bestellen</button></form>
+                        <div class="mx-auto grid max-w-screen-2xl gap-3 px-3 py-3 sm:px-5 lg:grid-cols-[1fr_auto] lg:items-end lg:gap-5 lg:py-6">
+                            <div class="flex items-center justify-between gap-3 lg:block"><p class="text-xs font-medium leading-5 text-emerald-700 sm:text-sm">KW <span class="tabular-nums">{$week}</span> <span class="tabular-nums">({$selectedWeekDateLabel})</span></p><div class="text-sm text-stone-500 lg:mt-1"><span><strong class="text-stone-900">{$total}</strong> Rezepte</span></div></div>
+                            <div class="flex w-full flex-wrap gap-2 lg:w-auto">
+                                <form method="post" action="/task" data-confirm-title="Woche {$week} bestellen?" data-confirm="Der aktuelle REWE-Warenkorb wird vollständig geleert und durch die Zutaten dieser Woche ersetzt." data-confirm-button="Jetzt bestellen!" class="w-full lg:w-auto"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="order"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="{$orderTitle}" class="flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium lg:w-auto {$orderStyle}"{$orderDisabled}><i data-lucide="shopping-cart" class="size-4"></i>Produkte dieser Woche bestellen</button></form>
                             </div>
                         </div>
                     </section>
                     <section class="border-b border-stone-200 bg-stone-100/70">
-                        <div class="mx-auto max-w-screen-2xl px-5 py-4">
+                        <div class="mx-auto max-w-screen-2xl px-3 py-3 sm:px-5 lg:py-4">
                             <details class="group lg:hidden"><summary class="flex cursor-pointer list-none items-center justify-between rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium"><span class="flex items-center gap-2"><i data-lucide="sliders-horizontal" class="size-4"></i>Filter und Sortierung</span><i data-lucide="chevron-down" class="size-4 transition-transform group-open:rotate-180"></i></summary><form method="get" class="mt-3 grid gap-2">{$filterControls}</form></details>
                             <form method="get" class="hidden gap-2 lg:grid lg:grid-cols-[minmax(15rem,1fr)_auto_auto_auto_auto_auto]">{$filterControls}</form>
                         </div>
                     </section>
-                    <section class="mx-auto max-w-screen-2xl px-5 py-6">
-                        <div data-recipe-grid class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">{$recipeHtml}</div>
+                    <section class="mx-auto max-w-screen-2xl px-3 py-4 sm:px-5 lg:py-6">
+                        <div data-recipe-grid class="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">{$recipeHtml}</div>
                         {$lazyLoaderHtml}
                     </section>
                 </main>
@@ -1241,12 +1352,27 @@ final class Application
         throw new RuntimeException(message: 'Der angemeldete Benutzer konnte nicht geladen werden.');
     }
 
+    /** @param array{processed: int, failed: int, errors: list<string>} $result */
+    private function ingredientSyncMessage(array $result): string
+    {
+        $message = sprintf('%d Rezepte verarbeitet, %d fehlgeschlagen.', $result['processed'], $result['failed']);
+        $errors = array_slice(array: $result['errors'], offset: 0, length: 5);
+        if ($errors !== []) {
+            $message .= ' ' . implode(separator: ' ', array: $errors);
+        }
+        $remainingErrorCount = count(value: $result['errors']) - count(value: $errors);
+        if ($remainingErrorCount > 0) {
+            $message .= ' Weitere ' . $remainingErrorCount . ' Fehler.';
+        }
+        return $message;
+    }
+
     private function formatSyncRunTime(?string $timestamp): string
     {
         if ($timestamp === null) {
             return 'noch nie';
         }
-        return (new DateTimeImmutable(datetime: $timestamp, timezone: new DateTimeZone(timezone: 'UTC')))
+        return new DateTimeImmutable(datetime: $timestamp, timezone: new DateTimeZone(timezone: 'UTC'))
             ->setTimezone(timezone: new DateTimeZone(timezone: date_default_timezone_get()))
             ->format(format: 'd.m. H:i');
     }

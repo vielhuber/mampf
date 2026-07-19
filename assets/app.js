@@ -27,12 +27,6 @@ if ($themeToggle !== null) {
 
 createIcons({ icons });
 
-document.querySelectorAll('[data-week-select]').forEach($select => {
-    $select.addEventListener('change', () => {
-        window.location.assign($select.value);
-    });
-});
-
 let showError = message =>
     Swal.fire({
         title: 'Fehler',
@@ -41,6 +35,18 @@ let showError = message =>
         confirmButtonText: 'OK',
         confirmButtonColor: '#047857'
     });
+
+document.querySelectorAll('[data-sync-status]').forEach($button => {
+    $button.addEventListener('click', () => {
+        Swal.fire({
+            title: $button.dataset.syncTitle,
+            text: $button.dataset.syncMessage,
+            icon: $button.dataset.syncIcon,
+            confirmButtonText: 'OK',
+            confirmButtonColor: '#047857'
+        });
+    });
+});
 
 let $loginForm = document.querySelector('[data-login-form]');
 if ($loginForm !== null) {

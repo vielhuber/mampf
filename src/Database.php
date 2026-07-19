@@ -11,6 +11,9 @@ final class Database
 {
     public const SYNC_RECIPES = 'recipes';
     public const SYNC_INGREDIENTS = 'ingredients';
+    public const SYNC_STATUS_SUCCESS = 'success';
+    public const SYNC_STATUS_ERROR = 'error';
+    public const SYNC_STATUS_CANCELLED = 'cancelled';
 
     private dbhelper $connection;
 
@@ -78,7 +81,9 @@ final class Database
 
                 CREATE TABLE IF NOT EXISTS sync_runs (
                     type TEXT PRIMARY KEY,
-                    completed_at TEXT NOT NULL
+                    completed_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'success',
+                    message TEXT NOT NULL DEFAULT ''
                 );
 
                 CREATE TABLE IF NOT EXISTS recipe_ratings (
@@ -111,6 +116,16 @@ final class Database
             array: $this->connection->fetch_all('PRAGMA table_info(recipes)'),
             column_key: 'name'
         );
+        $syncRunColumns = array_column(
+            array: $this->connection->fetch_all('PRAGMA table_info(sync_runs)'),
+            column_key: 'name'
+        );
+        if (!in_array(needle: 'status', haystack: $syncRunColumns, strict: true)) {
+            $this->connection->query("ALTER TABLE sync_runs ADD COLUMN status TEXT NOT NULL DEFAULT 'success'");
+        }
+        if (!in_array(needle: 'message', haystack: $syncRunColumns, strict: true)) {
+            $this->connection->query("ALTER TABLE sync_runs ADD COLUMN message TEXT NOT NULL DEFAULT ''");
+        }
         $noteColumns = $this->connection->fetch_all('PRAGMA table_info(recipe_notes)');
         $noteUserIdIsPrimary = false;
         foreach ($noteColumns as $noteColumn) {
@@ -508,34 +523,55 @@ final class Database
         return $recipeCount;
     }
 
-    public function recordSyncRun(string $type): void
+    public function recordSyncRun(string $type, string $status = self::SYNC_STATUS_SUCCESS, string $message = ''): void
     {
         if (!in_array(needle: $type, haystack: [self::SYNC_RECIPES, self::SYNC_INGREDIENTS], strict: true)) {
             throw new RuntimeException(message: 'Ungültiger Synchronisierungstyp.');
         }
+        if (
+            !in_array(
+                needle: $status,
+                haystack: [self::SYNC_STATUS_SUCCESS, self::SYNC_STATUS_ERROR, self::SYNC_STATUS_CANCELLED],
+                strict: true
+            )
+        ) {
+            throw new RuntimeException(message: 'Ungültiger Synchronisierungsstatus.');
+        }
         $this->connection->query(
             <<<'SQL'
-                INSERT INTO sync_runs (type, completed_at)
-                VALUES (?, CURRENT_TIMESTAMP)
-                ON CONFLICT(type) DO UPDATE SET completed_at = CURRENT_TIMESTAMP
+                INSERT INTO sync_runs (type, completed_at, status, message)
+                VALUES (?, CURRENT_TIMESTAMP, ?, ?)
+                ON CONFLICT(type) DO UPDATE SET
+                    completed_at = CURRENT_TIMESTAMP,
+                    status = excluded.status,
+                    message = excluded.message
             SQL
             ,
-            $type
+            $type,
+            $status,
+            $message
         );
     }
 
-    /** @return array{recipes: ?string, ingredients: ?string} */
-    public function syncRunTimes(): array
+    /** @return array{recipes: array{completed_at: ?string, status: string, message: string}, ingredients: array{completed_at: ?string, status: string, message: string}} */
+    public function syncRuns(): array
     {
-        $times = [self::SYNC_RECIPES => null, self::SYNC_INGREDIENTS => null];
-        foreach ($this->connection->fetch_all('SELECT type, completed_at FROM sync_runs') as $run) {
+        $runs = [
+            self::SYNC_RECIPES => ['completed_at' => null, 'status' => '', 'message' => ''],
+            self::SYNC_INGREDIENTS => ['completed_at' => null, 'status' => '', 'message' => '']
+        ];
+        foreach ($this->connection->fetch_all('SELECT type, completed_at, status, message FROM sync_runs') as $run) {
             $type = (string) $run['type'];
-            if (!array_key_exists(key: $type, array: $times)) {
+            if (!array_key_exists(key: $type, array: $runs)) {
                 continue;
             }
-            $times[$type] = (string) $run['completed_at'];
+            $runs[$type] = [
+                'completed_at' => (string) $run['completed_at'],
+                'status' => (string) $run['status'],
+                'message' => (string) $run['message']
+            ];
         }
-        return $times;
+        return $runs;
     }
 
     /** @return list<array<string, mixed>> */

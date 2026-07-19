@@ -304,12 +304,24 @@ final class DatabaseTest extends TestCase
         $database->saveNote($recipeId, '1', 'first@example.org', 'Notiz');
         $database->saveIngredientMapping('potato', 'Kartoffeln', [['listing_id' => 'product-1']]);
         $database->saveOrder(2026, 29, 'completed', ['added' => ['product-1']]);
-        $database->recordSyncRun(Database::SYNC_RECIPES);
-        $database->recordSyncRun(Database::SYNC_INGREDIENTS);
+        $database->recordSyncRun(
+            type: Database::SYNC_RECIPES,
+            status: Database::SYNC_STATUS_SUCCESS,
+            message: 'Recipes complete.'
+        );
+        $database->recordSyncRun(
+            type: Database::SYNC_INGREDIENTS,
+            status: Database::SYNC_STATUS_ERROR,
+            message: 'One ingredient failed.'
+        );
 
-        $syncRunTimes = $database->syncRunTimes();
-        $this->assertNotNull($syncRunTimes[Database::SYNC_RECIPES]);
-        $this->assertNotNull($syncRunTimes[Database::SYNC_INGREDIENTS]);
+        $syncRuns = $database->syncRuns();
+        $this->assertNotNull($syncRuns[Database::SYNC_RECIPES]['completed_at']);
+        $this->assertSame(Database::SYNC_STATUS_SUCCESS, $syncRuns[Database::SYNC_RECIPES]['status']);
+        $this->assertSame('Recipes complete.', $syncRuns[Database::SYNC_RECIPES]['message']);
+        $this->assertNotNull($syncRuns[Database::SYNC_INGREDIENTS]['completed_at']);
+        $this->assertSame(Database::SYNC_STATUS_ERROR, $syncRuns[Database::SYNC_INGREDIENTS]['status']);
+        $this->assertSame('One ingredient failed.', $syncRuns[Database::SYNC_INGREDIENTS]['message']);
 
         $this->assertSame(1, $database->resetRecipes());
         $this->assertSame(0, $database->recipeCount('', 2026, 29));
@@ -317,9 +329,36 @@ final class DatabaseTest extends TestCase
         $this->assertSame(0, $database->ratingSummary($recipeId)['count']);
         $this->assertNull($database->ingredientMapping('potato'));
         $this->assertSame(
-            [Database::SYNC_RECIPES => null, Database::SYNC_INGREDIENTS => null],
-            $database->syncRunTimes()
+            [
+                Database::SYNC_RECIPES => ['completed_at' => null, 'status' => '', 'message' => ''],
+                Database::SYNC_INGREDIENTS => ['completed_at' => null, 'status' => '', 'message' => '']
+            ],
+            $database->syncRuns()
         );
+        unlink(filename: $path);
+    }
+
+    public function testLegacySyncRunsAreMigratedWithSuccessfulStatus(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $connection = new \PDO(dsn: 'sqlite:' . $path);
+        $connection->exec(
+            <<<'SQL'
+                CREATE TABLE sync_runs (
+                    type TEXT PRIMARY KEY,
+                    completed_at TEXT NOT NULL
+                );
+                INSERT INTO sync_runs VALUES ('recipes', '2026-07-19 06:10:53');
+            SQL
+        );
+        unset($connection);
+
+        $database = new Database(path: $path);
+        $syncRun = $database->syncRuns()[Database::SYNC_RECIPES];
+
+        $this->assertSame('2026-07-19 06:10:53', $syncRun['completed_at']);
+        $this->assertSame(Database::SYNC_STATUS_SUCCESS, $syncRun['status']);
+        $this->assertSame('', $syncRun['message']);
         unlink(filename: $path);
     }
 }
