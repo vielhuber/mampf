@@ -1257,9 +1257,9 @@ final class Application
             </head>
             <body data-csrf="{$csrf}" class="min-h-screen bg-stone-50 text-stone-950">
                 <header class="border-b border-stone-200 bg-white">
-                    <div class="mx-auto grid max-w-screen-2xl grid-cols-1 items-center py-2 lg:grid-cols-[1fr_auto_1fr] lg:gap-2 lg:px-5 lg:py-3">
+                    <div class="mx-auto grid max-w-screen-2xl grid-cols-1 items-center px-3 py-2 sm:px-5 lg:grid-cols-[1fr_auto_1fr] lg:gap-2 lg:py-3">
                         <a href="/" class="hidden items-center gap-3 justify-self-start lg:flex"><span class="grid size-9 place-items-center rounded-md bg-emerald-700 text-white"><i data-lucide="utensils" class="size-5"></i></span><span class="text-lg font-semibold">mampf</span></a>
-                        <nav aria-label="Kalenderwoche auswählen" class="mx-auto flex w-full min-w-0 max-w-full gap-1 overflow-x-auto px-2 py-0.5 lg:gap-1.5 lg:px-1 lg:py-1">{$weekTiles}</nav>
+                        <nav aria-label="Kalenderwoche auswählen" class="mx-auto flex w-full min-w-0 max-w-full gap-1 overflow-x-auto py-0.5 lg:gap-1.5 lg:px-1 lg:py-1">{$weekTiles}</nav>
                         <div class="hidden justify-items-end gap-1 justify-self-end lg:grid">
                             <div class="flex items-center gap-1">
                                 <form method="post" action="/task" data-confirm-title="Rezepte aktualisieren?" data-confirm="Alle HelloFresh-Rezepte, Zutaten für drei Portionen und PDF-Links werden aktualisiert." data-confirm-button="Aktualisieren" class="hidden lg:block"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="scrape-recipes"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="Rezepte aktualisieren" aria-label="Rezepte aktualisieren" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="refresh-cw" class="size-4"></i></button></form>
