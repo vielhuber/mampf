@@ -1092,7 +1092,7 @@ final class Application
             }
             $recipeHtml .= <<<HTML
                 <article data-recipe-id="{$id}" class="overflow-hidden rounded-lg border border-stone-200 bg-white">
-                    <a href="{$sourceUrl}" target="_blank" rel="noopener noreferrer" class="block aspect-[2/1] overflow-hidden bg-stone-100 sm:aspect-[4/3]">
+                    <a href="{$sourceUrl}" target="_blank" rel="noopener noreferrer" class="block aspect-[4/1] overflow-hidden bg-stone-100 sm:aspect-[4/3]">
                         <img src="{$imageUrl}" alt="{$name}" loading="lazy" class="size-full object-cover transition duration-200 hover:scale-[1.02]">
                     </a>
                     <div class="p-3 sm:p-4">
