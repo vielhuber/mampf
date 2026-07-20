@@ -13,6 +13,7 @@ final class HelloFreshScraper
     private const SITEMAP_URL = 'https://www.hellofresh.de/sitemap_recipe_pages.xml';
     private const API_URL = 'https://www.hellofresh.de/gw/recipes/recipes';
     private const BATCH_SIZE = 250;
+    private const API_REQUEST_ATTEMPTS = 3;
     private const IMAGE_URL = 'https://media.hellofresh.com/c_fit,f_auto,fl_lossy,h_400,q_80,w_800/hellofresh_s3/image/';
     private const CATEGORY_ALIASES = [
         'american' => 'Amerikanisch',
@@ -111,9 +112,24 @@ final class HelloFreshScraper
                     ]
                 );
             $response = $this->httpClient->request(url: $url, headers: $this->apiHeaders());
-            if ($response->status !== 200 && $skip < 10000) {
+            $requestAttempts = 1;
+            for (
+                $attempt = 2;
+                $attempt <= self::API_REQUEST_ATTEMPTS && ($response->status === 429 || $response->status >= 500);
+                $attempt++
+            ) {
+                sleep(seconds: $attempt - 1);
+                $checkpoint?->__invoke();
+                $response = $this->httpClient->request(url: $url, headers: $this->apiHeaders());
+                $requestAttempts = $attempt;
+            }
+            if ($response->status !== 200) {
                 throw new RuntimeException(
-                    message: 'Die HelloFresh-Rezept-API antwortete mit HTTP ' . $response->status . '.'
+                    message: 'Die HelloFresh-Rezept-API antwortete' .
+                        ($requestAttempts > 1 ? ' nach ' . $requestAttempts . ' Versuchen' : '') .
+                        ' mit HTTP ' .
+                        $response->status .
+                        '.'
                 );
             }
             $data = $response->json();
@@ -156,10 +172,7 @@ final class HelloFreshScraper
                     pdfUrl: $this->pdfUrl(recipe: $item),
                     categories: $this->categories(recipe: $item)
                 );
-                $this->database->updateIngredientDefinitions(
-                    sourceId: $sourceId,
-                    ingredients: $ingredients
-                );
+                $this->database->updateIngredientDefinitions(sourceId: $sourceId, ingredients: $ingredients);
                 $isNew ? $created++ : $updated++;
                 unset($publicRecipes[$sourceId]);
             }
@@ -239,10 +252,7 @@ final class HelloFreshScraper
                         pdfUrl: $this->pdfUrl(recipe: $item),
                         categories: $this->categories(recipe: $item)
                     );
-                    $this->database->updateIngredientDefinitions(
-                        sourceId: $sourceId,
-                        ingredients: $ingredients
-                    );
+                    $this->database->updateIngredientDefinitions(sourceId: $sourceId, ingredients: $ingredients);
                     $isNew ? $created++ : $updated++;
                     unset($publicRecipes[$sourceId]);
                 }
