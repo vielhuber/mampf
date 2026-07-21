@@ -471,17 +471,18 @@ final class Application
         unset($_SESSION['tasks'][$taskId]);
         if (!is_array(value: $task)) {
             http_response_code(response_code: 409);
-            header(header: 'Content-Type: application/x-ndjson; charset=utf-8');
-            echo json_encode(
-                value: ['type' => 'error', 'message' => 'Diese Aufgabe wurde bereits gestartet oder ist abgelaufen.'],
-                flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE
-            ) . "\n";
+            header(header: 'Content-Type: text/event-stream; charset=utf-8');
+            $this->sendProgress(
+                progress: 100,
+                message: 'Diese Aufgabe wurde bereits gestartet oder ist abgelaufen.',
+                type: 'error'
+            );
             exit();
         }
         session_write_close();
         set_time_limit(seconds: 0);
         ignore_user_abort(false);
-        header(header: 'Content-Type: application/x-ndjson; charset=utf-8');
+        header(header: 'Content-Type: text/event-stream; charset=utf-8');
         header(header: 'Cache-Control: no-cache, no-store');
         header(header: 'X-Accel-Buffering: no');
         while (ob_get_level() > 0) {
@@ -827,17 +828,19 @@ final class Application
         string $type = 'progress',
         ?string $returnUrl = null
     ): void {
-        echo json_encode(
-            value: [
-                'type' => $type,
-                'progress' => max(0, min(100, $progress)),
-                'message' => $message,
-                'return_url' => $returnUrl
-            ],
-            flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
-        ) .
+        echo 'data: ' .
+            json_encode(
+                value: [
+                    'type' => $type,
+                    'progress' => max(0, min(100, $progress)),
+                    'message' => $message,
+                    'return_url' => $returnUrl
+                ],
+                flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+            ) .
+            "\n:" .
             str_repeat(string: ' ', times: 8192) .
-            "\n";
+            "\n\n";
         flush();
     }
 
@@ -1380,7 +1383,11 @@ final class Application
     /** @return array{css: string, js: string} */
     private function assets(): array
     {
-        return ['css' => '/app.css', 'js' => '/app.js'];
+        $cssPath = $this->runtime->root . '/public/app.css';
+        $jsPath = $this->runtime->root . '/public/app.js';
+        $cssVersion = is_file(filename: $cssPath) ? (int) filemtime(filename: $cssPath) : 0;
+        $jsVersion = is_file(filename: $jsPath) ? (int) filemtime(filename: $jsPath) : 0;
+        return ['css' => '/app.css?v=' . $cssVersion, 'js' => '/app.js?v=' . $jsVersion];
     }
 
     private function csrfToken(): string

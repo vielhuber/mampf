@@ -487,18 +487,29 @@ if ($taskForm !== null) {
             let reader = response.body.getReader();
             let decoder = new TextDecoder();
             let buffer = '';
+            let parseProgress = line => {
+                let trimmedLine = line.trim();
+                if (!trimmedLine.startsWith('data:')) {
+                    return;
+                }
+                let payload = trimmedLine.slice(5).trimStart();
+                applyUpdate(JSON.parse(payload));
+            };
             while (true) {
                 let result = await reader.read();
                 buffer += decoder.decode(result.value || new Uint8Array(), { stream: !result.done });
                 let lines = buffer.split('\n');
                 buffer = lines.pop() || '';
-                lines.filter(line => line.trim() !== '').forEach(line => applyUpdate(JSON.parse(line)));
+                lines.forEach(parseProgress);
                 if (result.done) {
                     break;
                 }
             }
             if (buffer.trim() !== '') {
-                applyUpdate(JSON.parse(buffer));
+                parseProgress(buffer);
+            }
+            if (!terminal) {
+                throw new Error('Die Verbindung wurde vor Abschluss beendet.');
             }
             if (!response.ok && !terminal) {
                 throw new Error('Der Vorgang konnte nicht abgeschlossen werden.');
