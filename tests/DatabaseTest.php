@@ -185,6 +185,7 @@ final class DatabaseTest extends TestCase
         $this->assertSame('Alpha', $italian[0]['name']);
         $this->assertSame('Alpha', $mappingRecipes[0]['name']);
         $this->assertCount(1, $mappingRecipes);
+        $this->assertCount(2, $database->recipesForIngredientMapping(includeComplete: true));
         $this->assertSame(3, $database->mappedIngredientCount('', 2026, 29));
         $this->assertSame(1, $database->mappedIngredientCount('Alpha', 2026, 29));
         $this->assertSame(2, $database->mappedIngredientCount('', 2026, 29, ingredientFilter: 'mapped'));
@@ -366,6 +367,18 @@ final class DatabaseTest extends TestCase
         unlink(filename: $path);
     }
 
+    public function testIngredientMappingIsFilteredBySearchVersion(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $database = new Database(path: $path);
+        $products = [['listing_id' => 'product-1']];
+        $database->saveIngredientMapping(key: 'kartoffeln', query: 'Kartoffeln', products: $products, searchVersion: 2);
+
+        $this->assertSame($products, $database->ingredientMapping(key: 'kartoffeln', searchVersion: 2));
+        $this->assertNull($database->ingredientMapping(key: 'kartoffeln', searchVersion: 3));
+        unlink(filename: $path);
+    }
+
     public function testLegacySyncRunsAreMigratedWithSuccessfulStatus(): void
     {
         $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
@@ -387,6 +400,34 @@ final class DatabaseTest extends TestCase
         $this->assertSame('2026-07-19 06:10:53', $syncRun['completed_at']);
         $this->assertSame(Database::SYNC_STATUS_SUCCESS, $syncRun['status']);
         $this->assertSame('', $syncRun['message']);
+        unlink(filename: $path);
+    }
+
+    public function testCompletedIngredientRunWithMissingProductsIsMigratedToSuccessfulStatus(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $connection = new \PDO(dsn: 'sqlite:' . $path);
+        $connection->exec(
+            <<<'SQL'
+                CREATE TABLE sync_runs (
+                    type TEXT PRIMARY KEY,
+                    completed_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    message TEXT NOT NULL
+                );
+                INSERT INTO sync_runs VALUES (
+                    'ingredients',
+                    '2026-07-21 08:12:00',
+                    'error',
+                    '148 Rezepte vollständig zugeordnet, 9330 mit fehlenden Produkten.'
+                );
+            SQL
+        );
+        unset($connection);
+
+        $syncRun = (new Database(path: $path))->syncRuns()[Database::SYNC_INGREDIENTS];
+
+        $this->assertSame(Database::SYNC_STATUS_SUCCESS, $syncRun['status']);
         unlink(filename: $path);
     }
 }

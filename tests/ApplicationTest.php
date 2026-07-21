@@ -32,14 +32,14 @@ final class ApplicationTest extends TestCase
 
         ob_start();
         try {
-            $method->invoke($application, 42, 'Läuft.', 'progress', '/?year=2026');
+            $method->invoke($application, 42, 'Läuft.', 'progress', '/?year=2026', 'rewe-cookie-export');
             $output = ob_get_contents();
         } finally {
             ob_end_clean();
         }
 
         $this->assertSame(
-            "data: {\"type\":\"progress\",\"progress\":42,\"message\":\"Läuft.\",\"return_url\":\"/?year=2026\"}\n:" .
+            "data: {\"type\":\"progress\",\"progress\":42,\"message\":\"Läuft.\",\"return_url\":\"/?year=2026\",\"help\":\"rewe-cookie-export\"}\n:" .
                 str_repeat(string: ' ', times: 8192) .
                 "\n\n",
             $output

@@ -31,7 +31,8 @@ final class Runtime
             database: $this->database,
             httpClient: $this->httpClient,
             cookieFile: $cookieFile,
-            cookieJarFile: $root . '/.data/rewe.json.jar'
+            cookieJarFile: $root . '/.data/rewe.json.jar',
+            productCatalogFile: $root . '/.data/rewe-product-catalog.json'
         );
         $this->auth = new simpleauth(
             config: $root . '/.config/.env',

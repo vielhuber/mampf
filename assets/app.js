@@ -358,6 +358,7 @@ if ($taskForm !== null) {
     let $percentage = document.querySelector('[data-task-percentage]');
     let $time = document.querySelector('[data-task-time]');
     let $status = document.querySelector('[data-task-status]');
+    let $reweHelp = document.querySelector('[data-task-rewe-help]');
     let $stop = document.querySelector('[data-task-stop]');
     let $basket = document.querySelector('[data-task-basket]');
     let $return = document.querySelector('[data-task-return]');
@@ -411,6 +412,7 @@ if ($taskForm !== null) {
         $progress.style.width = `${currentProgress}%`;
         $percentage.textContent = `${currentProgress} %`;
         $status.textContent = update.message || 'Vorgang läuft.';
+        $reweHelp.classList.toggle('hidden', update.help !== 'rewe-cookie-export');
         if (!['success', 'error', 'cancelled'].includes(update.type)) {
             updateTime();
             return;
@@ -418,6 +420,8 @@ if ($taskForm !== null) {
         terminal = true;
         window.clearInterval(timeInterval);
         updateTime();
+        $status.classList.remove('line-clamp-2', 'h-10');
+        $status.classList.add('min-h-10');
         let success = update.type === 'success';
         let cancelled = update.type === 'cancelled';
         $panel.classList.toggle('border-red-200', !success && !cancelled);

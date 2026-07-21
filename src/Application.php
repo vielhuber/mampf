@@ -231,13 +231,32 @@ final class Application
                         return;
                     }
                     $appendLog('INFO', sprintf('Zutaten: %d/%d Rezepte verarbeitet.', $current, $total));
+                },
+                catalogProgress: static function (
+                    int $current,
+                    int $total,
+                    int $productCount,
+                    string $sorting
+                ) use ($appendLog): void {
+                    if ($current !== 1 && $current % 5 !== 0 && $current !== $total) {
+                        return;
+                    }
+                    $appendLog(
+                        'INFO',
+                        sprintf(
+                            'REWE-Bestand (%s): Seite %d/%d geladen, %d eindeutige Produkte verfügbar.',
+                            $sorting,
+                            $current,
+                            $total,
+                            $productCount
+                        )
+                    );
                 }
             );
-            $ingredientSyncStatus =
-                $ingredients['failed'] === 0 ? Database::SYNC_STATUS_SUCCESS : Database::SYNC_STATUS_ERROR;
+            $this->writeMissingIngredientLog(result: $ingredients);
             $this->runtime->database->recordSyncRun(
                 type: Database::SYNC_INGREDIENTS,
-                status: $ingredientSyncStatus,
+                status: Database::SYNC_STATUS_SUCCESS,
                 message: $this->ingredientSyncMessage(result: $ingredients)
             );
             $activeSyncType = null;
@@ -249,7 +268,7 @@ final class Application
             $appendLog(
                 $ingredients['failed'] === 0 ? 'INFO' : 'ERROR',
                 sprintf(
-                    'Zutaten abgeschlossen: %d Rezepte verarbeitet, %d fehlgeschlagen.',
+                    'Zutaten abgeschlossen: %d Rezepte vollständig zugeordnet, %d mit fehlenden Produkten.',
                     $ingredients['processed'],
                     $ingredients['failed']
                 )
@@ -258,7 +277,7 @@ final class Application
             $appendLog($ingredients['failed'] === 0 ? 'DONE' : 'ERROR', 'Laufzeit: ' . $duration . ' Sekunden.');
             $statusCode = $ingredients['failed'] === 0 ? 200 : 500;
             $response = [
-                'status' => $ingredients['failed'] === 0 ? 'success' : 'partial',
+                'status' => 'success',
                 'recipes' => $recipes,
                 'ingredients' => $ingredients,
                 'duration_seconds' => $duration,
@@ -548,27 +567,38 @@ final class Application
                         $taskId
                     ): void {
                         $this->ensureTaskIsActive(taskId: $taskId);
-                        $taskProgress = min(95, (int) round(($current / max(1, $total)) * 95));
+                        $taskProgress = min(95, 20 + (int) round(($current / max(1, $total)) * 75));
                         $message = $success ? $name . ' wurde zugeordnet.' : $name . ': ' . $error;
                         $this->sendProgress(progress: $taskProgress, message: $message);
+                    },
+                    catalogProgress: function (int $current, int $total, int $productCount, string $sorting) use (
+                        &$taskProgress,
+                        $taskId
+                    ): void {
+                        $this->ensureTaskIsActive(taskId: $taskId);
+                        $taskProgress = min(20, max(1, (int) round(($current / max(1, $total)) * 20)));
+                        $this->sendProgress(
+                            progress: $taskProgress,
+                            message: sprintf(
+                                'REWE-Bestand wird geladen (%s): Seite %d von %d, %d eindeutige Produkte.',
+                                $sorting,
+                                $current,
+                                $total,
+                                $productCount
+                            )
+                        );
                     },
                     checkpoint: function () use ($taskId): void {
                         $this->ensureTaskIsActive(taskId: $taskId);
                     }
                 );
-                $message = sprintf(
-                    '%d Rezepte zugeordnet, %d fehlgeschlagen.',
-                    $result['processed'],
-                    $result['failed']
-                );
-                if ($result['errors'] !== []) {
-                    $message .= ' ' . implode(separator: ' ', array: $result['errors']);
-                }
-                $completionType = $result['failed'] === 0 ? 'success' : 'error';
+                $this->writeMissingIngredientLog(result: $result);
+                $message = $this->ingredientSyncMessage(result: $result);
+                $completionType = 'success';
                 $this->runtime->database->recordSyncRun(
                     type: Database::SYNC_INGREDIENTS,
-                    status: $completionType === 'success' ? Database::SYNC_STATUS_SUCCESS : Database::SYNC_STATUS_ERROR,
-                    message: $this->ingredientSyncMessage(result: $result)
+                    status: Database::SYNC_STATUS_SUCCESS,
+                    message: $message
                 );
                 $activeSyncType = null;
             }
@@ -613,6 +643,15 @@ final class Application
                 returnUrl: (string) $task['return_url']
             );
         } catch (RuntimeException $exception) {
+            $help = null;
+            $currentException = $exception;
+            while ($currentException !== null) {
+                if ($currentException instanceof ReweAccessException) {
+                    $help = 'rewe-cookie-export';
+                    break;
+                }
+                $currentException = $currentException->getPrevious();
+            }
             if ($activeSyncType !== null) {
                 try {
                     $this->runtime->database->recordSyncRun(
@@ -635,7 +674,8 @@ final class Application
                 progress: 100,
                 message: $exception->getMessage(),
                 type: 'error',
-                returnUrl: (string) $task['return_url']
+                returnUrl: (string) $task['return_url'],
+                help: $help
             );
         }
         exit();
@@ -806,7 +846,16 @@ final class Application
                             <div data-task-progress class="h-full w-[1%] rounded-full bg-emerald-700 transition-[width] duration-300"></div>
                         </div>
                         <div class="mt-3 flex items-center justify-between gap-4 text-xs font-medium text-stone-500"><span data-task-percentage class="tabular-nums">1 %</span><span data-task-time class="tabular-nums">0:00 vergangen · Restzeit wird berechnet</span></div>
-                        <p data-task-status class="mt-2 min-h-5 text-sm text-stone-600">Vorgang wird gestartet.</p>
+                        <p data-task-status class="mt-2 line-clamp-2 h-10 text-sm text-stone-600">Vorgang wird gestartet.</p>
+                        <div data-task-rewe-help class="mt-5 hidden rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+                            <p class="font-semibold">REWE-Zugriff erneuern</p>
+                            <ol class="mt-2 list-decimal space-y-2 pl-5">
+                                <li>Lokal im Projekt <code>npm run cookies:rewe</code> starten.</li>
+                                <li>Im geöffneten Chrome die Menschprüfung lösen, anmelden und den Lieferstandort prüfen. Das dauerhaft gespeicherte Profil in <code>.data/rewe-chrome-profile</code> wird beim nächsten Export wiederverwendet.</li>
+                                <li>Im Terminal mit Enter bestätigen. Das Script exportiert Shop- und Konto-Cookies inklusive HttpOnly direkt in <code>.config</code>.</li>
+                                <li>Die Cookies nicht weitergeben. Danach den Lauf erneut starten.</li>
+                            </ol>
+                        </div>
                         <button data-task-stop type="button" class="mt-6 flex w-full items-center justify-center gap-2 rounded-md border border-red-200 px-4 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50"><i data-lucide="square" class="size-3.5 fill-current"></i>Stoppen</button>
                         {$basketLink}
                         <a data-task-return href="{$returnUrl}" class="hidden w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium {$returnClasses}"><i data-lucide="arrow-left" class="size-4"></i>Zurück zum Wochenplan</a>
@@ -826,7 +875,8 @@ final class Application
         int $progress,
         string $message,
         string $type = 'progress',
-        ?string $returnUrl = null
+        ?string $returnUrl = null,
+        ?string $help = null
     ): void {
         echo 'data: ' .
             json_encode(
@@ -834,7 +884,8 @@ final class Application
                     'type' => $type,
                     'progress' => max(0, min(100, $progress)),
                     'message' => $message,
-                    'return_url' => $returnUrl
+                    'return_url' => $returnUrl,
+                    'help' => $help
                 ],
                 flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
             ) .
@@ -1355,19 +1406,46 @@ final class Application
         throw new RuntimeException(message: 'Der angemeldete Benutzer konnte nicht geladen werden.');
     }
 
-    /** @param array{processed: int, failed: int, errors: list<string>} $result */
+    /**
+     * @param array{processed: int, failed: int, errors: list<string>, missing_ingredients: array<string, int>} $result
+     */
     private function ingredientSyncMessage(array $result): string
     {
-        $message = sprintf('%d Rezepte verarbeitet, %d fehlgeschlagen.', $result['processed'], $result['failed']);
+        $message = sprintf(
+            '%d Rezepte vollständig zugeordnet, %d mit fehlenden Produkten.',
+            $result['processed'],
+            $result['failed']
+        );
         $errors = array_slice(array: $result['errors'], offset: 0, length: 5);
         if ($errors !== []) {
             $message .= ' ' . implode(separator: ' ', array: $errors);
         }
         $remainingErrorCount = count(value: $result['errors']) - count(value: $errors);
         if ($remainingErrorCount > 0) {
-            $message .= ' Weitere ' . $remainingErrorCount . ' Fehler.';
+            $message .= ' Weitere ' . $remainingErrorCount . ' unvollständige Rezepte.';
         }
         return $message;
+    }
+
+    /**
+     * @param array{processed: int, failed: int, errors: list<string>, missing_ingredients: array<string, int>} $result
+     */
+    private function writeMissingIngredientLog(array $result): void
+    {
+        $path = $this->runtime->root . '/.data/rewe-missing-ingredients.log';
+        $lines = [
+            'Erstellt: ' . date(format: DATE_ATOM),
+            'Nicht gefundene Zutaten: ' . count(value: $result['missing_ingredients']),
+            '',
+            "Betroffene Rezepte\tZutat"
+        ];
+        foreach ($result['missing_ingredients'] as $ingredient => $recipeCount) {
+            $lines[] = $recipeCount . "\t" . $ingredient;
+        }
+        $temporaryPath = $path . '.' . bin2hex(string: random_bytes(length: 8));
+        file_put_contents(filename: $temporaryPath, data: implode(separator: "\n", array: $lines) . "\n");
+        chmod(filename: $temporaryPath, permissions: 0600);
+        rename(from: $temporaryPath, to: $path);
     }
 
     private function formatSyncRunTime(?string $timestamp): string

@@ -55,12 +55,7 @@ final class HelloFreshScraperTest extends TestCase
                 [
                     'name' => 'Vegetarisch',
                     'displayLabel' => true,
-                    'preferences' => [
-                        'Fleisch & Gemüse',
-                        'Veggie & Fisch',
-                        'Internationale Küche',
-                        'Vegan'
-                    ]
+                    'preferences' => ['Fleisch & Gemüse', 'Veggie & Fisch', 'Internationale Küche', 'Vegan']
                 ],
                 ['name' => 'Veggie', 'displayLabel' => true, 'preferences' => []],
                 ['name' => 'Family', 'displayLabel' => true, 'preferences' => ['Familienfreundlich']],
@@ -79,20 +74,108 @@ final class HelloFreshScraperTest extends TestCase
         $database->upsertRecipe('a', 'Alpha', 'image', 'https://example.org/a', null);
         $database->upsertRecipe('b', 'Beta', 'image', 'https://example.org/b', null);
         foreach ($database->recipes('', 1, 10, 2026, 29, sort: 'name_asc') as $recipe) {
-            $database->updateIngredients(
-                recipeId: (int) $recipe['id'],
-                ingredients: [['name' => 'Kartoffeln']]
-            );
+            $database->updateIngredients(recipeId: (int) $recipe['id'], ingredients: [['name' => 'Kartoffeln']]);
         }
         $scraper = new HelloFreshScraper(database: $database, httpClient: new HttpClient());
         $reweClient = new ReweClient(database: $database, httpClient: new HttpClient(), cookieFile: '/does/not/exist');
 
         $this->expectException(exception: RuntimeException::class);
-        $this->expectExceptionMessage(message: 'Alpha: Die REWE-Cookie-Datei wurde nicht gefunden');
+        $this->expectExceptionMessage(message: 'Die REWE-Cookie-Datei wurde nicht gefunden');
         try {
             $scraper->scrapeIngredients(reweClient: $reweClient);
         } finally {
             unlink(filename: $path);
         }
+    }
+
+    public function testIngredientMappingDownloadsReweCatalogWhenProductsAreCached(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $database = new Database(path: $path);
+        $database->upsertRecipe('a', 'Alpha', 'image', 'https://example.org/a', null);
+        $recipe = $database->recipes('', 1, 10, 2026, 29)[0];
+        $database->updateIngredients(recipeId: (int) $recipe['id'], ingredients: [['name' => 'Kartoffeln']]);
+        $database->saveIngredientMapping(
+            key: 'kartoffeln',
+            query: 'Kartoffeln',
+            products: [['listing_id' => 'product-1']],
+            searchVersion: ReweClient::PRODUCT_SEARCH_VERSION
+        );
+        $scraper = new HelloFreshScraper(database: $database, httpClient: new HttpClient());
+        $reweClient = new ReweClient(database: $database, httpClient: new HttpClient(), cookieFile: '/does/not/exist');
+
+        $this->expectException(exception: RuntimeException::class);
+        $this->expectExceptionMessage(message: 'Die REWE-Cookie-Datei wurde nicht gefunden');
+        try {
+            $scraper->scrapeIngredients(reweClient: $reweClient);
+        } finally {
+            unlink(filename: $path);
+        }
+    }
+
+    public function testIngredientMappingCountsRecipesWithoutProductsAsFailed(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $database = new Database(path: $path);
+        $database->upsertRecipe('a', 'Alpha', 'image', 'https://example.org/a', null);
+        $recipe = $database->recipes('', 1, 10, 2026, 29)[0];
+        $database->updateIngredients(
+            recipeId: (int) $recipe['id'],
+            ingredients: [['name' => 'Kartoffeln'], ['name' => 'Boemboe Rendang']]
+        );
+        $database->saveIngredientMapping(
+            key: 'boemboe rendang',
+            query: 'Boemboe Rendang',
+            products: [],
+            searchVersion: ReweClient::PRODUCT_SEARCH_VERSION
+        );
+        $scraper = new HelloFreshScraper(database: $database, httpClient: new HttpClient());
+        $reweClient = new ReweClient(database: $database, httpClient: new HttpClient(), cookieFile: '/does/not/exist');
+        $property = new \ReflectionClass(objectOrClass: $reweClient)->getProperty(name: 'productsByIngredient');
+        $property->setValue(
+            $reweClient,
+            ['kartoffeln' => [['listing_id' => 'product-1']], 'boemboe rendang' => []]
+        );
+        new \ReflectionClass(objectOrClass: $reweClient)
+            ->getProperty(name: 'productCatalogLoaded')
+            ->setValue($reweClient, true);
+
+        $result = $scraper->scrapeIngredients(reweClient: $reweClient);
+
+        $this->assertSame(0, $result['processed']);
+        $this->assertSame(1, $result['failed']);
+        $this->assertStringContainsString('Boemboe Rendang', $result['errors'][0]);
+        $this->assertSame(['Boemboe Rendang' => 1], $result['missing_ingredients']);
+        unlink(filename: $path);
+    }
+
+    public function testIngredientMappingRemapsAlreadyCompleteRecipes(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $database = new Database(path: $path);
+        $database->upsertRecipe('a', 'Alpha', 'image', 'https://example.org/a', null);
+        $recipe = $database->recipes('', 1, 10, 2026, 29)[0];
+        $database->updateIngredients(
+            recipeId: (int) $recipe['id'],
+            ingredients: [['name' => 'Kartoffeln', 'selected' => ['listing_id' => 'old-listing']]]
+        );
+        $reweClient = new ReweClient(database: $database, httpClient: new HttpClient(), cookieFile: '/does/not/exist');
+        $reflection = new \ReflectionClass(objectOrClass: $reweClient);
+        $reflection->getProperty(name: 'productsByIngredient')->setValue(
+            $reweClient,
+            ['kartoffeln' => [['listing_id' => 'new-listing', 'name' => 'Kartoffeln']]]
+        );
+        $reflection->getProperty(name: 'productCatalogLoaded')->setValue($reweClient, true);
+
+        $result = new HelloFreshScraper(database: $database, httpClient: new HttpClient())->scrapeIngredients(
+            reweClient: $reweClient
+        );
+        $updatedRecipe = $database->recipes('', 1, 10, 2026, 29)[0];
+        $ingredients = json_decode(json: (string) $updatedRecipe['ingredients_json'], associative: true);
+
+        $this->assertSame(1, $result['processed']);
+        $this->assertSame(0, $result['failed']);
+        $this->assertSame('new-listing', $ingredients[0]['selected']['listing_id']);
+        unlink(filename: $path);
     }
 }

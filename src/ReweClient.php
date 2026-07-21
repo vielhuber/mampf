@@ -10,12 +10,194 @@ use RuntimeException;
 
 final class ReweClient
 {
+    public const PRODUCT_SEARCH_VERSION = 6;
+
     private const BASE_URL = 'https://www.rewe.de';
     private const SEARCH_URL = self::BASE_URL . '/shop/productList';
+    private const SEARCH_API_URL = self::BASE_URL . '/shop/api/products';
     private const BASKET_URL = self::BASE_URL . '/shop/checkout/basket';
     private const ACCOUNT_URL = 'https://account.rewe.de/realms/sso/account/';
     private const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
     private const EMPTY_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7;
+    private const CATALOG_PAGE_SIZE = 500;
+    private const CATALOG_MAX_PAGES = 100;
+    private const CATALOG_CACHE_VERSION = 1;
+    private const CATALOG_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7;
+    private const CATALOG_SORTINGS = [
+        'RELEVANCE_DESC' => 'Relevanz',
+        'TOPSELLER_DESC' => 'Beliebtheit',
+        'NAME_ASC' => 'Name',
+        'PRICE_ASC' => 'Preis aufsteigend',
+        'PRICE_DESC' => 'Preis absteigend'
+    ];
+    private const SEARCH_QUERY_ALIASES = [
+        'aprikosenchutney' => 'Aprikosenkonfitüre',
+        'baby pak choi' => 'Mini Pak Choi',
+        'basmati wildreis mischung' => 'Basmati Reis',
+        'balsamicocreme' => 'Balsamico Creme',
+        'basilikumpaste' => 'Basilikum',
+        'bergjausenkase' => 'Bergkäse',
+        'bimi brokkoli' => 'Bimi Broccoli',
+        'buffelmozzarella' => 'Mozzarella',
+        'buntbarsch tilapia filet' => 'Pangasiusfilet',
+        'burgerbrotchen' => 'Hamburger Brötchen',
+        'beyond meat vegan burger patty' => 'Beyond Meat Beyond Burger Chicken-Style',
+        'blattsalatmischung' => 'Salatmischung',
+        'bulgogisosse' => 'Teriyaki Sauce',
+        'butterbohnen' => 'Weiße Riesenbohnen',
+        'buttermilch zitronen dressing' => 'Joghurt Dressing',
+        'cannellinibohnen' => 'Weiße Bohnen',
+        'chilischote' => 'Chili Jalapeno',
+        'chipotle paste' => 'Chipotle Chili Sauce',
+        'chili nudeln' => 'Penne Nudeln',
+        'ciabatta brot' => 'Ciabatta',
+        'chapati brot' => 'Pita',
+        'coleslaw mix' => 'Weißkohl',
+        'demi glace' => 'Braten-Fond',
+        'dorade' => 'Doradenfilets',
+        'fenchelknolle' => 'Fenchel',
+        'feigenrelish' => 'Feigen Senfsauce',
+        'fetakase' => 'Feta',
+        'gehackter knoblauch ingwer in ol' => 'Ingwer',
+        'gehackter knoblauch zwiebel in rapsol' => 'Knoblauch',
+        'frische paccheri' => 'Penne Nudeln',
+        'frische strozzapreti' => 'Penne Nudeln',
+        'fruhlingszwiebel' => 'Lauchzwiebeln',
+        'gemusebruhpulver' => 'Gemüsebrühe',
+        'gewurzmischung hello buon appetito' => 'Italienische Kräuter',
+        'gewurzmischung hello cajun' => 'Paprika geräuchert',
+        'gewurzmischung hello curry' => 'Currypulver',
+        'gewurzmischung hello dukkah' => 'Ras el Hanout Gewürzmischung',
+        'gewurzmischung hello fiesta' => 'Kreuzkümmel gemahlen',
+        'gewurzmischung hello grunzeug' => 'Kräuter der Provence',
+        'gewurzmischung hello harissa' => 'Harissa Gewürzmischung',
+        'gewurzmischung hello mezze' => 'Ras el Hanout Gewürzmischung',
+        'gewurzmischung hello muskat' => 'Muskatnuss gemahlen',
+        'gewurzmischung hello paprika' => 'Paprika edelsüß',
+        'gewurzmischung hello patatas' => 'Bratkartoffel Gewürzsalz',
+        'gewurzmischung hello piri piri' => 'Piri-Piri',
+        'gewurzmischung hello smoky paprika' => 'Paprika geräuchert',
+        'gewurzmischung hello souflaki' => 'Gyros Gewürzsalz',
+        'gewurzmischung hello aloha' => 'Currypulver',
+        'gewurzmischung hello baharat' => 'Ras el Hanout Gewürzmischung',
+        'gewurzmischung hello kokos curry' => 'Currypulver',
+        'gewurzmischung hello mediterraneo' => 'Italienische Kräuter',
+        'gewurzmischung hellomediterraneo' => 'Italienische Kräuter',
+        'gewurzmischung hello smokey' => 'Paprika geräuchert',
+        'gewurzmischung linsensuppe' => 'Gemüsebrühe',
+        'gewurzmischung paprikagewurz' => 'Paprika edelsüß',
+        'grossgarnelen' => 'Garnelen',
+        'hahnchenbruststreifen' => 'Hähnchen Filetstreifen',
+        'hahnchengeschnetzeltes' => 'Hähnchen Geschnetzeltes',
+        'hahncheninnenbrustfilet' => 'Hähnchen Innenbrustfilet',
+        'hahnchenkeule in krautermarinade' => 'Hähnchenschenkel',
+        'harissa paste' => 'Harissa Gewürzmischung',
+        'hartkase ital art' => 'Hartkäse gerieben',
+        'ingwerpaste' => 'Ingwer',
+        'kampot pfeffer' => 'Pfeffer schwarz',
+        'karotte lauch mix' => 'Wok Mix',
+        'kartoffelstarke' => 'Speisestärke',
+        'knoblauchzehe' => 'Knoblauch',
+        'knoblauch ingwer zitronengras paste' => 'Ingwer',
+        'knoblauch krauter mix' => 'Kräuter der Provence',
+        'knoblauch zwiebel gehackt in rapsol' => 'Knoblauch',
+        'knollensellerie' => 'Sellerie',
+        'kochsahne' => 'Kochcreme',
+        'korianderkorner' => 'Koriandersamen',
+        'korniger senf' => 'Dijon Senf',
+        'kirschtomatenpolpa' => 'Polpa Tomatenfruchtfleisch',
+        'ketjap manis' => 'Sojasauce',
+        'kumin' => 'Kreuzkümmel gemahlen',
+        'maggikraut' => 'Liebstöckel',
+        'mandelblattchen' => 'Mandeln gehobelt',
+        'mandeln blanchiert' => 'Mandeln gehobelt',
+        'madras curry pulver' => 'Currypulver',
+        'misopaste' => 'Miso Paste',
+        'maiskolben' => 'Goldmais',
+        'marinierter tofu mit basilikum' => 'Tofu Natur',
+        'mozzarella bocconcino' => 'Mozzarella',
+        'mini klosse' => 'Kartoffel Knödel',
+        'naan brot' => 'Fladenbrot',
+        'norwegisches lachsfilet' => 'Lachsfilet',
+        'nurnberger bratwurstchen' => 'Nürnberger Rostbratwürste',
+        'ofenkartoffel' => 'Kartoffeln',
+        'orzo nudeln' => 'Kritharaki Nudeln',
+        'pangasius' => 'Pangasiusfilet',
+        'pankomehl' => 'Panko Paniermehl',
+        'paprika multicolor' => 'Paprika Mix',
+        'paprikagewurz' => 'Paprika edelsüß',
+        'paprikapulver edelsuss' => 'Paprika edelsüß',
+        'pekanusskerne' => 'Pekan-Nusskerne',
+        'pflaumenkonfiture' => 'Pflaumenmus',
+        'pflucksalat' => 'Salatmischung',
+        'pita brote' => 'Mini Pita',
+        'portobello pilze' => 'Champignons braun',
+        'pilzbruhepaste' => 'Gemüsebrühe',
+        'ravigote sosse' => 'Remoulade',
+        'risottoreis' => 'Risotto Reis',
+        'rosmarinzweig' => 'Rosmarin',
+        'sahnemeerrettich' => 'Sahne Meerrettich',
+        'sambal badjak' => 'Sambal Oelek',
+        'seehecht' => 'Alaska Seelachsfilet',
+        'seelachs ohne haut' => 'Alaska Seelachsfilet',
+        'senfsosse mit fruhlingszwiebeln' => 'Dijon Senf',
+        'simmentaler rinderhackfleisch' => 'Rinderhackfleisch',
+        'skipjack thunfisch im eigenen saft' => 'Thunfisch Filets in eigenem Saft',
+        'schweinelachssteaks' => 'Schweinefilet',
+        'schweinefleischstreifen' => 'Schweinefilet',
+        'schweinefiletspitzen in rosmarinmarinade' => 'Schweinefilet',
+        'schweineschnitzel' => 'Schweine Schnitzel',
+        'stangenbohnen' => 'grüne Bohnen',
+        'stangensellerie' => 'Staudensellerie',
+        'stir fry mix' => 'Wok Mix',
+        'susser chili grill tofu' => 'Tofu Natur',
+        'tahini paste' => 'Tahini Sesammus',
+        'thai basilikum' => 'Basilikum',
+        'tikka masala paste' => 'Tikka Masala Sauce vegan',
+        'tortellini spinat und ricotta' => 'Spinat Maultaschen',
+        'tomatensugo' => 'Tomatensauce',
+        'tomatenpolpa' => 'Polpa Tomatenfruchtfleisch',
+        'hello umami' => 'Umami',
+        'vegane mayonnaise' => 'Salat Mayo vegan',
+        'vegane filetstucke hahnchen art' => 'Veganes Geschnetzeltes Hähnchen',
+        'veganes knoblauch dressing' => 'Gartenkräuter Knoblauch Dressing',
+        'vegane mini suppenmaultaschen' => 'Vegane Maultaschen',
+        'vegane weisse misopaste' => 'Miso Paste',
+        'veganes cremiges sojaprodukt' => 'vegane Kochcreme',
+        'veganes schawarma' => 'Like Chicken vegan',
+        'vorgegarte kartoffelwurfel' => 'Kartoffeln in Scheiben',
+        'weizentortillas' => 'Weizen Tortillas',
+        'wildpreiselbeerenmarmelade' => 'Wildpreiselbeeren',
+        'wildpreiselbeermarmelade' => 'Wildpreiselbeeren',
+        'wurziger zwiebel chutney' => 'Röstzwiebeln',
+        'wurziges zwiebel chutney' => 'Röstzwiebeln',
+        'wurziger gouda' => 'Gouda gerieben',
+        'schwarze oliven ohne stein' => 'schwarze Oliven',
+        'zaatar' => 'Kräuter der Provence',
+        'the vegetarian butcher chick eria filets' => 'Like Chicken vegan',
+        'ziegenfrischkase crumble mit honig' => 'Ziegenfrischkäse',
+        'ziegenfrischkasetaler' => 'Ziegenfrischkäse',
+        'ei' => 'Eier'
+    ];
+    private const SEARCH_COMPOUND_SUFFIXES = [
+        'bohnen',
+        'chutney',
+        'couscous',
+        'creme',
+        'essig',
+        'filet',
+        'kase',
+        'konfiture',
+        'mischung',
+        'nudeln',
+        'paste',
+        'reis',
+        'salat',
+        'sosse',
+        'streifen',
+        'tomaten',
+        'tortillas'
+    ];
     private const SEARCH_DELAY_MIN_MICROSECONDS = 1_500_000;
     private const SEARCH_DELAY_MAX_MICROSECONDS = 3_000_000;
     private const SEARCH_COOLDOWN_INTERVAL = 100;
@@ -24,6 +206,11 @@ final class ReweClient
 
     /** @var array<string, list<array<string, mixed>>> */
     private array $productsByIngredient = [];
+    /** @var list<array{product: array<string, mixed>, normalized_name: string, normalized_words: list<string>}> */
+    private array $productCatalog = [];
+    /** @var array<string, list<int>> */
+    private array $productCatalogByWordPrefix = [];
+    private bool $productCatalogLoaded = false;
     private bool $shopSessionReady = false;
     private int $networkSearchCount = 0;
 
@@ -31,12 +218,164 @@ final class ReweClient
         private readonly Database $database,
         private readonly HttpClient $httpClient,
         private readonly string $cookieFile,
-        private readonly ?string $cookieJarFile = null
+        private readonly ?string $cookieJarFile = null,
+        private readonly ?string $productCatalogFile = null
     ) {}
 
     public function searchUrl(string $query): string
     {
         return self::SEARCH_URL . '?' . http_build_query(data: ['search' => $query]);
+    }
+
+    public function downloadProductCatalog(?callable $progress = null, ?callable $checkpoint = null): int
+    {
+        if ($this->productCatalogLoaded) {
+            return count(value: $this->productCatalog);
+        }
+        if ($this->productCatalogFile !== null && is_file(filename: $this->productCatalogFile)) {
+            $cookieFiles = array_values(
+                array: array_filter(
+                    array: [$this->cookieFile, dirname(path: $this->cookieFile) . '/rewe-account.json'],
+                    callback: is_file(...)
+                )
+            );
+            $latestCookieTime =
+                $cookieFiles === []
+                    ? 0
+                    : max(
+                        array_map(callback: fn(string $file): int => (int) filemtime(filename: $file), array: $cookieFiles)
+                    );
+            $cacheTime = (int) filemtime(filename: $this->productCatalogFile);
+            if (
+                $cacheTime >= time() - self::CATALOG_CACHE_TTL_SECONDS &&
+                $cacheTime >= $latestCookieTime
+            ) {
+                $cache = json_decode(
+                    json: (string) file_get_contents(filename: $this->productCatalogFile),
+                    associative: true
+                );
+                $cachedProducts = is_array(value: $cache['products'] ?? null) ? $cache['products'] : [];
+                if ((int) ($cache['version'] ?? 0) === self::CATALOG_CACHE_VERSION && $cachedProducts !== []) {
+                    $productCount = $this->hydrateProductCatalog(products: $cachedProducts);
+                    $progress?->__invoke(1, 1, $productCount, 'Cache');
+                    return $productCount;
+                }
+            }
+        }
+        $this->ensureShopSession();
+        $productsByListingId = [];
+        $pagesPerSorting = null;
+        $completedPages = 0;
+        foreach (self::CATALOG_SORTINGS as $sorting => $sortingLabel) {
+            $page = 1;
+            $pageCount = 1;
+            while ($page <= $pageCount) {
+                $checkpoint?->__invoke();
+                $response = $this->request(
+                    url: self::SEARCH_API_URL .
+                        '?' .
+                        http_build_query(
+                            data: [
+                                'search' => '*',
+                                'objectsPerPage' => self::CATALOG_PAGE_SIZE,
+                                'page' => $page,
+                                'sorting' => $sorting
+                            ]
+                        ),
+                    headers: ['Accept: application/vnd.rewe.digital.products+json;client=web;version=2']
+                );
+                if ($this->isCloudflareChallenge(response: $response)) {
+                    throw ReweAccessException::cloudflareChallenge();
+                }
+                if ($response->status !== 200) {
+                    throw new RuntimeException(
+                        message: 'Der REWE-Produktbestand antwortete mit HTTP ' . $response->status . '.'
+                    );
+                }
+                $data = json_decode(json: $response->body, associative: true);
+                $pagination = is_array(value: $data['pagination'] ?? null) ? $data['pagination'] : [];
+                if ($page === 1) {
+                    $pageCount = (int) ($pagination['pageCount'] ?? 0);
+                    if ($pageCount < 1 || $pageCount > self::CATALOG_MAX_PAGES) {
+                        throw new RuntimeException(
+                            message: 'Der REWE-Produktbestand meldete eine ungültige Seitenzahl.'
+                        );
+                    }
+                    $pagesPerSorting ??= $pageCount;
+                    if ($pageCount !== $pagesPerSorting) {
+                        throw new RuntimeException(
+                            message: 'Die REWE-Sortierungen meldeten unterschiedliche Seitenzahlen.'
+                        );
+                    }
+                }
+                $pageProducts = $this->parseProductSearchResponse(
+                    responseBody: $response->body,
+                    query: '*',
+                    limit: null
+                );
+                if ($pageProducts === []) {
+                    throw new RuntimeException(message: 'Der REWE-Produktbestand enthielt keine Produkte.');
+                }
+                foreach ($pageProducts as $product) {
+                    $listingId = trim(string: (string) ($product['listing_id'] ?? ''));
+                    if ($listingId !== '') {
+                        $productsByListingId[$listingId] = $product;
+                    }
+                }
+                $completedPages++;
+                $progress?->__invoke(
+                    $completedPages,
+                    $pagesPerSorting * count(value: self::CATALOG_SORTINGS),
+                    count(value: $productsByListingId),
+                    $sortingLabel
+                );
+                $page++;
+            }
+        }
+        $products = array_values(array: $productsByListingId);
+        if ($this->productCatalogFile !== null) {
+            $temporaryFile = $this->productCatalogFile . '.' . bin2hex(string: random_bytes(length: 8));
+            $cacheJson = json_encode(
+                value: ['version' => self::CATALOG_CACHE_VERSION, 'products' => $products],
+                flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+            );
+            if (file_put_contents(filename: $temporaryFile, data: $cacheJson) === false) {
+                throw new RuntimeException(message: 'Der REWE-Produktbestand konnte nicht gecacht werden.');
+            }
+            chmod(filename: $temporaryFile, permissions: 0600);
+            rename(from: $temporaryFile, to: $this->productCatalogFile);
+        }
+        return $this->hydrateProductCatalog(products: $products);
+    }
+
+    /** @param list<array<string, mixed>> $products */
+    private function hydrateProductCatalog(array $products): int
+    {
+        $this->productCatalog = [];
+        $this->productCatalogByWordPrefix = [];
+        foreach ($products as $product) {
+            if (!is_array(value: $product)) {
+                continue;
+            }
+            $normalizedName = $this->normalize(value: (string) ($product['name'] ?? ''));
+            if ($normalizedName === '' || trim(string: (string) ($product['listing_id'] ?? '')) === '') {
+                continue;
+            }
+            $normalizedWords = $this->searchWords(normalizedValue: $normalizedName);
+            $catalogIndex = count(value: $this->productCatalog);
+            $this->productCatalog[] = [
+                'product' => $product,
+                'normalized_name' => $normalizedName,
+                'normalized_words' => $normalizedWords
+            ];
+            foreach ($normalizedWords as $normalizedWord) {
+                $this->productCatalogByWordPrefix[substr(string: $normalizedWord, offset: 0, length: 3)][] =
+                    $catalogIndex;
+            }
+        }
+        $this->productsByIngredient = [];
+        $this->productCatalogLoaded = true;
+        return count(value: $this->productCatalog);
     }
 
     /** @return list<array<string, mixed>> */
@@ -46,50 +385,50 @@ final class ReweClient
         if (array_key_exists(key: $key, array: $this->productsByIngredient)) {
             return $this->productsByIngredient[$key];
         }
+        if ($this->productCatalogLoaded) {
+            $products = $this->productsFromCatalog(name: $name);
+            $this->database->saveIngredientMapping(
+                key: $key,
+                query: $name,
+                products: $products,
+                searchVersion: self::PRODUCT_SEARCH_VERSION
+            );
+            $this->productsByIngredient[$key] = $products;
+            return $products;
+        }
         if (!$refresh) {
-            $cached = $this->database->ingredientMapping(key: $key, maxAgeSeconds: self::CACHE_TTL_SECONDS);
+            $cached = $this->database->ingredientMapping(
+                key: $key,
+                maxAgeSeconds: self::CACHE_TTL_SECONDS,
+                searchVersion: self::PRODUCT_SEARCH_VERSION
+            );
             $emptyCacheIsFresh =
                 $cached === [] &&
-                $this->database->ingredientMapping(key: $key, maxAgeSeconds: self::EMPTY_CACHE_TTL_SECONDS) !== null;
+                $this->database->ingredientMapping(
+                    key: $key,
+                    maxAgeSeconds: self::EMPTY_CACHE_TTL_SECONDS,
+                    searchVersion: self::PRODUCT_SEARCH_VERSION
+                ) !== null;
             if ($cached !== null && ($cached !== [] || $emptyCacheIsFresh)) {
                 $this->productsByIngredient[$key] = $cached;
                 return $cached;
             }
-        }
-        $this->ensureShopSession();
-        $this->networkSearchCount++;
-        if ($this->networkSearchCount % self::SEARCH_COOLDOWN_INTERVAL === 0) {
-            sleep(
-                seconds: random_int(
-                    min: self::SEARCH_COOLDOWN_MIN_SECONDS,
-                    max: self::SEARCH_COOLDOWN_MAX_SECONDS
-                )
+            $previousVersionCache = $this->database->ingredientMapping(
+                key: $key,
+                maxAgeSeconds: self::CACHE_TTL_SECONDS
             );
+            if ($previousVersionCache !== null && $previousVersionCache !== []) {
+                $this->productsByIngredient[$key] = $previousVersionCache;
+                return $previousVersionCache;
+            }
         }
-        usleep(
-            microseconds: random_int(
-                min: self::SEARCH_DELAY_MIN_MICROSECONDS,
-                max: self::SEARCH_DELAY_MAX_MICROSECONDS
-            )
+        $products = $this->searchProductsAtRewe(name: $name);
+        $this->database->saveIngredientMapping(
+            key: $key,
+            query: $name,
+            products: $products,
+            searchVersion: self::PRODUCT_SEARCH_VERSION
         );
-        $response = $this->request(url: $this->searchUrl(query: $name));
-        if ($response->status !== 200) {
-            throw new RuntimeException(
-                message: 'Die REWE-Suche antwortete mit HTTP ' . $response->status . '. Prüfe den exportierten Cookie.'
-            );
-        }
-        $products = $this->parseProducts(html: $response->body, query: $name);
-        if (
-            $products === [] &&
-            str_contains(haystack: $response->body, needle: '/shop/p/') &&
-            str_contains(haystack: $response->body, needle: 'Standort wählen')
-        ) {
-            throw new RuntimeException(
-                message: 'REWE hat keinen Lieferstandort gesetzt. Öffne den REWE-Shop über dieselbe IP, ' .
-                    'wähle einen Standort und exportiere rewe-shop.json erneut.'
-            );
-        }
-        $this->database->saveIngredientMapping(key: $key, query: $name, products: $products);
         $this->productsByIngredient[$key] = $products;
         return $products;
     }
@@ -298,8 +637,53 @@ final class ReweClient
                 'score' => $this->productScore(query: $query, productName: $name, discount: $discount)
             ];
         }
-        usort(array: $products, callback: fn(array $first, array $second): int => $second['score'] <=> $first['score']);
-        return array_slice(array: $products, offset: 0, length: 5);
+        return $this->rankProducts(products: $products);
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function parseProductSearchResponse(string $responseBody, string $query, ?int $limit = 5): array
+    {
+        $response = json_decode(json: $responseBody, associative: true);
+        if (!is_array(value: $response) || !isset($response['hits']) || !is_array(value: $response['hits'])) {
+            throw new RuntimeException(message: 'Die REWE-Produktsuche lieferte ein unbekanntes Antwortformat.');
+        }
+        $products = [];
+        foreach ($response['hits'] as $hit) {
+            if (!is_array(value: $hit)) {
+                continue;
+            }
+            $productId = trim(string: (string) ($hit['productId'] ?? ''));
+            $listingId = trim(string: (string) ($hit['listingId'] ?? ''));
+            $name = trim(string: (string) ($hit['title'] ?? ''));
+            $detailsUrl = trim(string: (string) ($hit['detailsUrl'] ?? ''));
+            $pricing = is_array(value: $hit['pricing'] ?? null) ? $hit['pricing'] : [];
+            $tags = is_array(value: $hit['tags'] ?? null) ? $hit['tags'] : [];
+            if ($listingId === '' || $name === '' || $detailsUrl === '') {
+                continue;
+            }
+            $url = $detailsUrl;
+            if (str_starts_with(haystack: $url, needle: '/p/')) {
+                $url = self::BASE_URL . '/shop' . $url;
+            }
+            if (str_starts_with(haystack: $url, needle: '/') && !str_starts_with(haystack: $url, needle: '/p/')) {
+                $url = self::BASE_URL . $url;
+            }
+            $discount =
+                (is_array(value: $pricing['discount'] ?? null) && $pricing['discount'] !== []) ||
+                in_array(needle: 'discounted', haystack: $tags, strict: true);
+            $price = $pricing['currentRetailPrice'] ?? null;
+            $products[] = [
+                'product_id' => $productId,
+                'listing_id' => $listingId,
+                'name' => $name,
+                'url' => $url,
+                'image' => (string) ($hit['imageURL'] ?? ''),
+                'price' => is_numeric(value: $price) ? (float) $price / 100 : null,
+                'discount' => $discount,
+                'score' => $this->productScore(query: $query, productName: $name, discount: $discount)
+            ];
+        }
+        return $this->rankProducts(products: $products, limit: $limit);
     }
 
     /** @return array{id: string, listing_ids: list<string>, listing_quantities: array<string, int>, logged_in: bool} */
@@ -368,11 +752,199 @@ final class ReweClient
         if (str_starts_with(haystack: $normalizedName, needle: $normalizedQuery)) {
             $score += 20;
         }
+        if ($normalizedName === $normalizedQuery) {
+            $score += 100;
+        }
+        $score -= min(50, max(0, strlen(string: $normalizedName) - strlen(string: $normalizedQuery)));
         return $score + ($discount ? 5 : 0);
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function productsFromCatalog(string $name): array
+    {
+        $matches = [];
+        foreach ($this->productSearchQueries(name: $name) as $query) {
+            $normalizedQuery = $this->normalize(value: $query);
+            $queryWords = $this->searchWords(normalizedValue: $normalizedQuery);
+            if ($normalizedQuery === '' || $queryWords === []) {
+                continue;
+            }
+            $candidateIndexes = null;
+            foreach ($queryWords as $queryWord) {
+                $wordCandidateIndexes = [];
+                $prefix = substr(string: $queryWord, offset: 0, length: 3);
+                foreach ($this->productCatalogByWordPrefix[$prefix] ?? [] as $catalogIndex) {
+                    $productWords = $this->productCatalog[$catalogIndex]['normalized_words'];
+                    $wordMatches = false;
+                    foreach ($productWords as $productWord) {
+                        $lengthDifference = abs(strlen(string: $queryWord) - strlen(string: $productWord));
+                        if (
+                            $queryWord === $productWord ||
+                            ($lengthDifference <= 3 &&
+                                (str_starts_with(haystack: $queryWord, needle: $productWord) ||
+                                    str_starts_with(haystack: $productWord, needle: $queryWord)))
+                        ) {
+                            $wordMatches = true;
+                            break;
+                        }
+                    }
+                    if ($wordMatches) {
+                        $wordCandidateIndexes[$catalogIndex] = true;
+                    }
+                }
+                $candidateIndexes =
+                    $candidateIndexes === null
+                        ? $wordCandidateIndexes
+                        : array_intersect_key($candidateIndexes, $wordCandidateIndexes);
+                if ($candidateIndexes === []) {
+                    break;
+                }
+            }
+            foreach (array_keys(array: $candidateIndexes ?? []) as $catalogIndex) {
+                $catalogEntry = $this->productCatalog[$catalogIndex];
+                $product = $catalogEntry['product'];
+                $listingId = (string) ($product['listing_id'] ?? '');
+                $product['score'] = $this->productScore(
+                    query: $query,
+                    productName: (string) ($product['name'] ?? ''),
+                    discount: ($product['discount'] ?? false) === true
+                );
+                if (!isset($matches[$listingId]) || $product['score'] > $matches[$listingId]['score']) {
+                    $matches[$listingId] = $product;
+                }
+            }
+        }
+        return $this->rankProducts(products: array_values(array: $matches));
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function searchProductsAtRewe(string $name): array
+    {
+        $this->ensureShopSession();
+        $this->networkSearchCount++;
+        if ($this->networkSearchCount % self::SEARCH_COOLDOWN_INTERVAL === 0) {
+            sleep(seconds: random_int(min: self::SEARCH_COOLDOWN_MIN_SECONDS, max: self::SEARCH_COOLDOWN_MAX_SECONDS));
+        }
+        usleep(
+            microseconds: random_int(min: self::SEARCH_DELAY_MIN_MICROSECONDS, max: self::SEARCH_DELAY_MAX_MICROSECONDS)
+        );
+        $products = [];
+        foreach ($this->productSearchQueries(name: $name) as $searchIndex => $searchQuery) {
+            if ($searchIndex > 0) {
+                usleep(microseconds: random_int(min: 500_000, max: 1_000_000));
+            }
+            $response = $this->request(
+                url: self::SEARCH_API_URL . '?' . http_build_query(data: ['search' => $searchQuery]),
+                headers: ['Accept: application/vnd.rewe.digital.products+json;client=web;version=2']
+            );
+            if ($this->isCloudflareChallenge(response: $response)) {
+                throw ReweAccessException::cloudflareChallenge();
+            }
+            if ($response->status !== 200) {
+                throw new RuntimeException(
+                    message: 'Die REWE-Suche antwortete mit HTTP ' .
+                        $response->status .
+                        '. Prüfe den exportierten Cookie.'
+                );
+            }
+            $products = $this->parseProductSearchResponse(responseBody: $response->body, query: $searchQuery);
+            if ($products !== []) {
+                break;
+            }
+        }
+        return $products;
+    }
+
+    /** @return list<string> */
+    private function productSearchQueries(string $name): array
+    {
+        $queries = [];
+        $addQuery = static function (string $query) use (&$queries): void {
+            $query = trim(
+                string: preg_replace(pattern: '~\s+~u', replacement: ' ', subject: $query) ?? $query,
+                characters: " \t\n\r\0\x0B,;"
+            );
+            if (
+                $query !== '' &&
+                !in_array(
+                    needle: mb_strtolower(string: $query),
+                    haystack: array_map(mb_strtolower(...), $queries),
+                    strict: true
+                )
+            ) {
+                $queries[] = $query;
+            }
+        };
+        $addQuery($name);
+        $expandedName = preg_replace(
+            pattern: ['~\bvorw\.?\s*festk\.?\b~iu', '~\bmehligk\.?\b~iu', '~\bfestk\.?\b~iu'],
+            replacement: ['vorwiegend festkochend', 'mehligkochend', 'festkochend'],
+            subject: $name
+        );
+        $addQuery(is_string(value: $expandedName) ? $expandedName : $name);
+        foreach ($queries as $query) {
+            $withoutParentheses = trim(
+                string: preg_replace(pattern: '~\s*\([^)]*\)~u', replacement: '', subject: $query) ?? $query
+            );
+            $addQuery($withoutParentheses);
+            $addQuery(explode(separator: ',', string: $withoutParentheses, limit: 2)[0]);
+        }
+        foreach ($queries as $query) {
+            $withoutPreparation = trim(
+                string: preg_replace(pattern: '~(\p{L}+)zubereitung\b~iu', replacement: '$1', subject: $query) ?? $query
+            );
+            $addQuery($withoutPreparation);
+            $addQuery(
+                preg_replace(
+                    pattern: '~^Gewürzmischung\s+~iu',
+                    replacement: '',
+                    subject: $withoutPreparation
+                ) ?? $withoutPreparation
+            );
+            $withoutQualifiers = preg_replace(
+                pattern: [
+                    '~\bital\.?\s+Art\b~iu',
+                    '~\b(?:in Lake|in Scheiben|im Kühlbeutel|vom Weiderind|pro Person)\b~iu',
+                    '~\b(?:bio|baby|lila|blanchiert(?:e|er|es|en|em)?|libanesisch(?:e|er|es|en|em)?|getrocknet(?:e|er|es|en|em)?|gemahlen(?:e|er|es|en|em)?|rot(?:e|er|es|en|em)?|gelb(?:e|er|es|en|em)?|grün(?:e|er|es|en|em)?|bunt(?:e|er|es|en|em)?|klein(?:e|er|es|en|em)?|mild(?:e|er|es|en|em)?|frisch(?:e|er|es|en|em)?|braun(?:e|er|es|en|em)?|gereift(?:e|er|es|en|em)?|gerieben(?:e|er|es|en|em)?|geraspelt(?:e|er|es|en|em)?|mariniert(?:e|er|es|en|em)?|gewachst(?:e|er|es|en|em)?|vorgegart(?:e|er|es|en|em)?|vorgekocht(?:e|er|es|en|em)?|glatt|leicht(?:e|er|es|en|em)?|ganz(?:e|er|es|en|em)?)\b~iu'
+                ],
+                replacement: ' ',
+                subject: $withoutPreparation
+            );
+            $addQuery(is_string(value: $withoutQualifiers) ? $withoutQualifiers : $withoutPreparation);
+            foreach ([$withoutPreparation, $withoutQualifiers] as $queryWithParts) {
+                if (!is_string(value: $queryWithParts) || !str_contains(haystack: $queryWithParts, needle: '/')) {
+                    continue;
+                }
+                foreach (explode(separator: '/', string: $queryWithParts) as $queryPart) {
+                    $addQuery($queryPart);
+                }
+            }
+        }
+        foreach ($queries as $query) {
+            $alias = self::SEARCH_QUERY_ALIASES[$this->normalize(value: $query)] ?? null;
+            if ($alias !== null) {
+                $addQuery($alias);
+            }
+        }
+        return $queries;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $products
+     * @return list<array<string, mixed>>
+     */
+    private function rankProducts(array $products, ?int $limit = 5): array
+    {
+        usort(array: $products, callback: fn(array $first, array $second): int => $second['score'] <=> $first['score']);
+        if ($limit === null) {
+            return $products;
+        }
+        return array_slice(array: $products, offset: 0, length: $limit);
     }
 
     private function normalize(string $value): string
     {
+        $value = str_ireplace(search: 'sauce', replace: 'soße', subject: $value);
         $ascii = iconv(
             from_encoding: 'UTF-8',
             to_encoding: 'ASCII//TRANSLIT//IGNORE',
@@ -385,6 +957,35 @@ final class ReweClient
                 subject: $ascii !== false ? $ascii : $value
             ) ?? ''
         );
+    }
+
+    /** @return list<string> */
+    private function searchWords(string $normalizedValue): array
+    {
+        $words = [];
+        foreach (array_filter(array: explode(separator: ' ', string: $normalizedValue)) as $word) {
+            if (strlen(string: $word) < 3) {
+                continue;
+            }
+            $compoundWasSplit = false;
+            foreach (self::SEARCH_COMPOUND_SUFFIXES as $suffix) {
+                if (!str_ends_with(haystack: $word, needle: $suffix)) {
+                    continue;
+                }
+                $prefix = substr(string: $word, offset: 0, length: -strlen(string: $suffix));
+                if (strlen(string: $prefix) < 3) {
+                    continue;
+                }
+                $words[] = $prefix;
+                $words[] = $suffix;
+                $compoundWasSplit = true;
+                break;
+            }
+            if (!$compoundWasSplit) {
+                $words[] = $word;
+            }
+        }
+        return array_values(array: array_unique(array: $words));
     }
 
     /** @return list<string> */
@@ -413,7 +1014,9 @@ final class ReweClient
         $this->request(url: self::ACCOUNT_URL);
         $loginResponse = $this->request(url: self::BASE_URL . '/mydata/login');
         if ($loginResponse->status !== 200) {
-            throw new RuntimeException(message: 'Die REWE-Anmeldung antwortete mit HTTP ' . $loginResponse->status . '.');
+            throw new RuntimeException(
+                message: 'Die REWE-Anmeldung antwortete mit HTTP ' . $loginResponse->status . '.'
+            );
         }
         $document = new DOMDocument();
         libxml_use_internal_errors(use_errors: true);
@@ -452,19 +1055,17 @@ final class ReweClient
         if ($response->status === 200) {
             return;
         }
-        if (
-            $response->status === 403 &&
-            (str_contains(haystack: $response->body, needle: 'Zeig uns, dass du ein Mensch bist') ||
-                str_contains(haystack: $response->body, needle: '_cf_chl_opt'))
-        ) {
-            throw new RuntimeException(
-                message: 'REWE blockiert den Server mit einer Cloudflare-Menschprüfung (HTTP 403). ' .
-                    'Beende den Lauf und versuche es später erneut.'
-            );
+        if ($this->isCloudflareChallenge(response: $response)) {
+            throw ReweAccessException::cloudflareChallenge();
         }
-        throw new RuntimeException(
-            message: 'Der REWE-Warenkorb antwortete mit HTTP ' . $response->status . '.'
-        );
+        throw new RuntimeException(message: 'Der REWE-Warenkorb antwortete mit HTTP ' . $response->status . '.');
+    }
+
+    private function isCloudflareChallenge(HttpResponse $response): bool
+    {
+        return $response->status === 403 &&
+            (str_contains(haystack: $response->body, needle: 'Zeig uns, dass du ein Mensch bist') ||
+                str_contains(haystack: $response->body, needle: '_cf_chl_opt'));
     }
 
     private function request(

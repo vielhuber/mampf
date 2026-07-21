@@ -276,16 +276,23 @@ final class HelloFreshScraper
     /**
      * Enrich recipes with shipped ingredients and matching REWE products.
      *
-     * @return array{processed: int, failed: int, errors: list<string>}
+     * @return array{processed: int, failed: int, errors: list<string>, missing_ingredients: array<string, int>}
      */
     public function scrapeIngredients(
         ReweClient $reweClient,
         ?int $limit = null,
         ?callable $progress = null,
+        ?callable $catalogProgress = null,
         ?callable $checkpoint = null
     ): array {
         $processed = 0;
-        $recipes = $this->database->recipesForIngredientMapping(limit: $limit);
+        $failed = 0;
+        $errors = [];
+        $missingIngredientCounts = [];
+        $recipes = $this->database->recipesForIngredientMapping(limit: $limit, includeComplete: true);
+        if ($recipes !== []) {
+            $reweClient->downloadProductCatalog(progress: $catalogProgress, checkpoint: $checkpoint);
+        }
         foreach ($recipes as $recipe) {
             try {
                 $checkpoint?->__invoke();
@@ -296,6 +303,7 @@ final class HelloFreshScraper
                     );
                 }
                 $ingredientsChanged = false;
+                $missingIngredients = [];
                 foreach ($ingredients as &$ingredient) {
                     $checkpoint?->__invoke();
                     if (!is_array(value: $ingredient)) {
@@ -308,6 +316,9 @@ final class HelloFreshScraper
                     $previousIngredient = $ingredient;
                     $previousListingId = trim(string: (string) ($ingredient['selected']['listing_id'] ?? ''));
                     $products = $reweClient->productsForIngredient(name: $name);
+                    if ($products === []) {
+                        $missingIngredients[] = $name;
+                    }
                     $ingredient['search_url'] = $reweClient->searchUrl(query: $name);
                     $ingredient['products'] = $products;
                     $ingredient['selected'] = $products[0] ?? null;
@@ -326,9 +337,28 @@ final class HelloFreshScraper
                 if ($ingredientsChanged) {
                     $this->database->updateIngredients(recipeId: (int) $recipe['id'], ingredients: $ingredients);
                 }
+                if ($missingIngredients !== []) {
+                    $failed++;
+                    $missingIngredients = array_values(array: array_unique(array: $missingIngredients));
+                    foreach ($missingIngredients as $missingIngredient) {
+                        $missingIngredientCounts[$missingIngredient] =
+                            ($missingIngredientCounts[$missingIngredient] ?? 0) + 1;
+                    }
+                    $error =
+                        'Keine REWE-Produkte gefunden für: ' .
+                        implode(separator: ', ', array: $missingIngredients) .
+                        '.';
+                    $errors[] = (string) $recipe['name'] . ': ' . $error;
+                    $current = $processed + $failed;
+                    if ($current % 10 === 0 || $current === count(value: $recipes)) {
+                        $progress?->__invoke((string) $recipe['name'], false, $current, count(value: $recipes), $error);
+                    }
+                    continue;
+                }
                 $processed++;
-                if ($processed % 10 === 0 || $processed === count(value: $recipes)) {
-                    $progress?->__invoke((string) $recipe['name'], true, $processed, count(value: $recipes));
+                $current = $processed + $failed;
+                if ($current % 10 === 0 || $current === count(value: $recipes)) {
+                    $progress?->__invoke((string) $recipe['name'], true, $current, count(value: $recipes));
                 }
             } catch (TaskCancelledException $exception) {
                 throw $exception;
@@ -336,7 +366,7 @@ final class HelloFreshScraper
                 $progress?->__invoke(
                     (string) $recipe['name'],
                     false,
-                    $processed + 1,
+                    $processed + $failed + 1,
                     count(value: $recipes),
                     $exception->getMessage()
                 );
@@ -346,7 +376,13 @@ final class HelloFreshScraper
                 );
             }
         }
-        return ['processed' => $processed, 'failed' => 0, 'errors' => []];
+        uksort(array: $missingIngredientCounts, callback: strnatcasecmp(...));
+        return [
+            'processed' => $processed,
+            'failed' => $failed,
+            'errors' => $errors,
+            'missing_ingredients' => $missingIngredientCounts
+        ];
     }
 
     /**

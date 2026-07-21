@@ -58,7 +58,8 @@ final class Database
                     ingredient_key TEXT PRIMARY KEY,
                     query TEXT NOT NULL,
                     products_json TEXT NOT NULL,
-                    scraped_at TEXT NOT NULL
+                    scraped_at TEXT NOT NULL,
+                    search_version INTEGER NOT NULL DEFAULT 1
                 );
 
                 CREATE TABLE IF NOT EXISTS week_recipes (
@@ -117,6 +118,15 @@ final class Database
             array: $this->connection->fetch_all('PRAGMA table_info(recipes)'),
             column_key: 'name'
         );
+        $ingredientMappingColumns = array_column(
+            array: $this->connection->fetch_all('PRAGMA table_info(ingredient_mappings)'),
+            column_key: 'name'
+        );
+        if (!in_array(needle: 'search_version', haystack: $ingredientMappingColumns, strict: true)) {
+            $this->connection->query(
+                'ALTER TABLE ingredient_mappings ADD COLUMN search_version INTEGER NOT NULL DEFAULT 1'
+            );
+        }
         $syncRunColumns = array_column(
             array: $this->connection->fetch_all('PRAGMA table_info(sync_runs)'),
             column_key: 'name'
@@ -127,6 +137,9 @@ final class Database
         if (!in_array(needle: 'message', haystack: $syncRunColumns, strict: true)) {
             $this->connection->query("ALTER TABLE sync_runs ADD COLUMN message TEXT NOT NULL DEFAULT ''");
         }
+        $this->connection->query(
+            "UPDATE sync_runs SET status = 'success' WHERE type = 'ingredients' AND (status = 'partial' OR (status = 'error' AND message LIKE '% mit fehlenden Produkten.%'))"
+        );
         $noteColumns = $this->connection->fetch_all('PRAGMA table_info(recipe_notes)');
         $noteUserIdIsPrimary = false;
         foreach ($noteColumns as $noteColumn) {
@@ -582,12 +595,13 @@ final class Database
     }
 
     /** @return list<array<string, mixed>> */
-    public function recipesForIngredientMapping(?int $limit = null): array
+    public function recipesForIngredientMapping(?int $limit = null, bool $includeComplete = false): array
     {
-        $sql = <<<'SQL'
+        $mappingCondition = $includeComplete ? '' : 'AND mapped_ingredient_count < ingredient_count';
+        $sql = <<<SQL
             SELECT * FROM recipes
             WHERE ingredient_count > 0
-              AND mapped_ingredient_count < ingredient_count
+              {$mappingCondition}
             ORDER BY
                 COALESCE(ingredients_scraped_at, '') ASC,
                 created_at ASC,
@@ -744,20 +758,22 @@ final class Database
     }
 
     /** @return list<array<string, mixed>>|null */
-    public function ingredientMapping(string $key, ?int $maxAgeSeconds = null): ?array
+    public function ingredientMapping(string $key, ?int $maxAgeSeconds = null, ?int $searchVersion = null): ?array
     {
-        $json =
-            $maxAgeSeconds === null
-                ? $this->connection->fetch_var(
-                    'SELECT products_json FROM ingredient_mappings WHERE ingredient_key = ?',
-                    $key
-                )
-                : $this->connection->fetch_var(
-                    "SELECT products_json FROM ingredient_mappings
-                 WHERE ingredient_key = ? AND scraped_at >= datetime('now', ?)",
-                    $key,
-                    '-' . max(0, $maxAgeSeconds) . ' seconds'
-                );
+        $conditions = ['ingredient_key = ?'];
+        $arguments = [$key];
+        if ($maxAgeSeconds !== null) {
+            $conditions[] = "scraped_at >= datetime('now', ?)";
+            $arguments[] = '-' . max(0, $maxAgeSeconds) . ' seconds';
+        }
+        if ($searchVersion !== null) {
+            $conditions[] = 'search_version = ?';
+            $arguments[] = $searchVersion;
+        }
+        $json = $this->connection->fetch_var(
+            'SELECT products_json FROM ingredient_mappings WHERE ' . implode(separator: ' AND ', array: $conditions),
+            ...$arguments
+        );
         if (!is_string(value: $json)) {
             return null;
         }
@@ -766,21 +782,23 @@ final class Database
     }
 
     /** @param list<array<string, mixed>> $products */
-    public function saveIngredientMapping(string $key, string $query, array $products): void
+    public function saveIngredientMapping(string $key, string $query, array $products, int $searchVersion = 1): void
     {
         $this->connection->query(
             <<<'SQL'
-                INSERT INTO ingredient_mappings (ingredient_key, query, products_json, scraped_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO ingredient_mappings (ingredient_key, query, products_json, scraped_at, search_version)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
                 ON CONFLICT(ingredient_key) DO UPDATE SET
                     query = excluded.query,
                     products_json = excluded.products_json,
-                    scraped_at = CURRENT_TIMESTAMP
+                    scraped_at = CURRENT_TIMESTAMP,
+                    search_version = excluded.search_version
             SQL
             ,
             $key,
             $query,
-            json_encode(value: $products, flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+            json_encode(value: $products, flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            $searchVersion
         );
     }
 
