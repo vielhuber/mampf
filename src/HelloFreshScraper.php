@@ -5,6 +5,7 @@ namespace Mampf;
 
 use DOMDocument;
 use DOMXPath;
+use JsonException;
 use RuntimeException;
 
 final class HelloFreshScraper
@@ -111,17 +112,25 @@ final class HelloFreshScraper
                         'skip' => $skip
                     ]
                 );
-            $response = $this->httpClient->request(url: $url, headers: $this->apiHeaders());
-            $requestAttempts = 1;
-            for (
-                $attempt = 2;
-                $attempt <= self::API_REQUEST_ATTEMPTS && ($response->status === 429 || $response->status >= 500);
-                $attempt++
-            ) {
-                sleep(seconds: $attempt - 1);
-                $checkpoint?->__invoke();
+            $data = null;
+            $requestAttempts = 0;
+            for ($attempt = 1; $attempt <= self::API_REQUEST_ATTEMPTS; $attempt++) {
+                if ($attempt > 1) {
+                    sleep(seconds: $attempt - 1);
+                    $checkpoint?->__invoke();
+                }
                 $response = $this->httpClient->request(url: $url, headers: $this->apiHeaders());
                 $requestAttempts = $attempt;
+                if ($response->status === 200) {
+                    $data = $this->decodeRecipeResponse(response: $response);
+                    if ($data !== null) {
+                        break;
+                    }
+                    continue;
+                }
+                if ($response->status !== 429 && $response->status < 500) {
+                    break;
+                }
             }
             if ($response->status !== 200) {
                 throw new RuntimeException(
@@ -132,7 +141,13 @@ final class HelloFreshScraper
                         '.'
                 );
             }
-            $data = $response->json();
+            if ($data === null) {
+                throw new RuntimeException(
+                    message: 'Die HelloFresh-Rezept-API lieferte nach ' .
+                        $requestAttempts .
+                        ' Versuchen ungültiges JSON.'
+                );
+            }
             $items = is_array(value: $data['items'] ?? null) ? $data['items'] : [];
             $total = max(0, (int) ($data['total'] ?? 0));
             $imageResponses = $this->imageResponses(items: $items, publicRecipes: $publicRecipes);
@@ -217,7 +232,10 @@ final class HelloFreshScraper
                     if (!($response instanceof HttpResponse) || $response->status !== 200) {
                         continue;
                     }
-                    $detailItems[$sourceId] = $response->json();
+                    $detailItem = $this->decodeRecipeResponse(response: $response);
+                    if ($detailItem !== null) {
+                        $detailItems[$sourceId] = $detailItem;
+                    }
                 }
                 $imageResponses = $this->imageResponses(
                     items: array_values(array: $detailItems),
@@ -271,6 +289,16 @@ final class HelloFreshScraper
             'unresolved' => count(value: $publicRecipes),
             'filtered' => $filtered
         ];
+    }
+
+    /** @return array<string, mixed>|null */
+    private function decodeRecipeResponse(HttpResponse $response): ?array
+    {
+        try {
+            return $response->json();
+        } catch (JsonException) {
+            return null;
+        }
     }
 
     /**

@@ -6,12 +6,27 @@ namespace Mampf\Tests;
 use Mampf\Database;
 use Mampf\HelloFreshScraper;
 use Mampf\HttpClient;
+use Mampf\HttpResponse;
 use Mampf\ReweClient;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
 final class HelloFreshScraperTest extends TestCase
 {
+    public function testInvalidRecipeJsonCanBeRetried(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $scraper = new HelloFreshScraper(database: new Database(path: $path), httpClient: new HttpClient());
+        $method = new \ReflectionClass(objectOrClass: $scraper)->getMethod(name: 'decodeRecipeResponse');
+
+        $this->assertNull($method->invoke($scraper, new HttpResponse(status: 200, body: "{\"name\":\"bad\x01\"}")));
+        $this->assertSame(
+            ['name' => 'valid'],
+            $method->invoke($scraper, new HttpResponse(status: 200, body: '{"name":"valid"}'))
+        );
+        unlink(filename: $path);
+    }
+
     public function testIngredientsForThreePeopleAreImported(): void
     {
         $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
