@@ -973,7 +973,7 @@ final class Application
             $syncStatus = $syncCompletedAt === null ? '' : $syncRun['status'];
             $syncStatusLabel = match ($syncStatus) {
                 Database::SYNC_STATUS_SUCCESS => '✅',
-                Database::SYNC_STATUS_ERROR => 'fehlgeschlagen',
+                Database::SYNC_STATUS_ERROR => '⛔',
                 Database::SYNC_STATUS_CANCELLED => 'abgebrochen',
                 default => 'noch nie'
             };
@@ -1033,7 +1033,7 @@ final class Application
         $cronHiddenClass = $cronVisible ? '' : ' hidden';
         $cronText = $cronStatus['running']
             ? 'Cron: läuft' . ($cronStartedLabel === '' ? '' : ' seit ' . $cronStartedLabel) . ' · ⚠️'
-            : 'Cron: ' . $cronCompletedLabel . ' · ' . ($cronStatus['status'] === 'success' ? '✅' : 'fehlgeschlagen');
+            : 'Cron: ' . $cronCompletedLabel . ' · ' . ($cronStatus['status'] === 'success' ? '✅' : '⛔');
         $cronTitle = $cronStatus['running'] ? 'Cron-Aktualisierung läuft' : 'Letzte Cron-Aktualisierung';
         $cronMessage = $cronStatus['running']
             ? 'Der Cronjob läuft im Hintergrund.'
