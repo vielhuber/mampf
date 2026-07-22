@@ -30,6 +30,9 @@ final class Application
         if (!$this->runtime->auth->isLoggedIn()) {
             $this->renderLogin();
         }
+        if ($path === '/cron/status') {
+            $this->handleCronStatus();
+        }
         if ($path === '/task/cancel') {
             $this->handleTaskCancellation();
         }
@@ -149,14 +152,38 @@ final class Application
         }
         if (!flock(stream: $lockHandle, operation: LOCK_EX | LOCK_NB)) {
             fclose(stream: $lockHandle);
-            http_response_code(response_code: 409);
-            echo json_encode(value: ['error' => 'Die Cron-Aktualisierung läuft bereits.'], flags: JSON_THROW_ON_ERROR);
+            http_response_code(response_code: 202);
+            echo json_encode(
+                value: ['status' => 'already_running', 'message' => 'Die Cron-Aktualisierung läuft bereits.'],
+                flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE
+            );
             exit();
         }
+        ftruncate(stream: $lockHandle, size: 0);
+        rewind(stream: $lockHandle);
+        fwrite(stream: $lockHandle, data: gmdate(format: 'Y-m-d H:i:s'));
+        fflush(stream: $lockHandle);
 
         set_time_limit(seconds: 0);
         ignore_user_abort(enable: true);
         $logFile = $dataDirectory . '/cron.log';
+        $acceptedResponse = json_encode(
+            value: [
+                'status' => 'accepted',
+                'message' => 'Die Cron-Aktualisierung wurde gestartet.',
+                'log' => '.data/cron.log'
+            ],
+            flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+        );
+        http_response_code(response_code: 202);
+        header(header: 'Content-Length: ' . strlen(string: $acceptedResponse));
+        echo $acceptedResponse;
+        if (function_exists(function: 'fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        }
+        if (!function_exists(function: 'fastcgi_finish_request')) {
+            flush();
+        }
         $appendLog = static function (string $level, string $message) use ($logFile): void {
             $line = sprintf("[%s] %-5s %s\n", date(format: 'Y-m-d H:i:s'), $level, $message);
             if (file_put_contents(filename: $logFile, data: $line, flags: FILE_APPEND | LOCK_EX) === false) {
@@ -164,8 +191,6 @@ final class Application
             }
         };
         $startedAt = microtime(as_float: true);
-        $statusCode = 200;
-        $response = [];
         $activeSyncType = null;
         try {
             $appendLog('START', 'Aktualisierung gestartet.');
@@ -224,7 +249,7 @@ final class Application
                     string $error = ''
                 ) use ($appendLog): void {
                     if ($current % 100 !== 0 && $current !== $total && !$success) {
-                        $appendLog('ERROR', $name . ': ' . $error);
+                        $appendLog('WARN', $name . ': ' . $error);
                         return;
                     }
                     if ($current % 100 !== 0 && $current !== $total) {
@@ -262,11 +287,11 @@ final class Application
             $activeSyncType = null;
             if ($ingredients['errors'] !== []) {
                 foreach ($ingredients['errors'] as $error) {
-                    $appendLog('ERROR', $error);
+                    $appendLog('WARN', $error);
                 }
             }
             $appendLog(
-                $ingredients['failed'] === 0 ? 'INFO' : 'ERROR',
+                'INFO',
                 sprintf(
                     'Zutaten abgeschlossen: %d Rezepte vollständig zugeordnet, %d mit fehlenden Produkten.',
                     $ingredients['processed'],
@@ -274,18 +299,9 @@ final class Application
                 )
             );
             $duration = round(num: microtime(as_float: true) - $startedAt, precision: 2);
-            $appendLog($ingredients['failed'] === 0 ? 'DONE' : 'ERROR', 'Laufzeit: ' . $duration . ' Sekunden.');
-            $statusCode = $ingredients['failed'] === 0 ? 200 : 500;
-            $response = [
-                'status' => 'success',
-                'recipes' => $recipes,
-                'ingredients' => $ingredients,
-                'duration_seconds' => $duration,
-                'log' => '.data/cron.log'
-            ];
+            $appendLog('DONE', 'Laufzeit: ' . $duration . ' Sekunden.');
+            $this->writeCronCompletion(status: 'success', message: 'Die Cron-Aktualisierung wurde abgeschlossen.');
         } catch (RuntimeException | JsonException | PDOException $exception) {
-            $statusCode = 500;
-            $response = ['status' => 'error', 'error' => $exception->getMessage()];
             if ($activeSyncType !== null) {
                 try {
                     $this->runtime->database->recordSyncRun(
@@ -300,14 +316,39 @@ final class Application
                 $appendLog('ERROR', $exception->getMessage());
             } catch (RuntimeException) {
             }
+            try {
+                $this->writeCronCompletion(status: 'error', message: $exception->getMessage());
+            } catch (RuntimeException | JsonException) {
+            }
         } finally {
+            ftruncate(stream: $lockHandle, size: 0);
+            fflush(stream: $lockHandle);
             flock(stream: $lockHandle, operation: LOCK_UN);
             fclose(stream: $lockHandle);
         }
-        http_response_code(response_code: $statusCode);
+        exit();
+    }
+
+    private function handleCronStatus(): never
+    {
+        header(header: 'Content-Type: application/json; charset=utf-8');
+        header(header: 'Cache-Control: no-store');
+        $status = $this->cronStatus();
         echo json_encode(
-            value: $response,
-            flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+            value: [
+                'running' => $status['running'],
+                'started_at' => $status['started_at'],
+                'started_label' => $status['started_at'] === null
+                    ? null
+                    : $this->formatSyncRunTime(timestamp: $status['started_at']),
+                'completed_at' => $status['completed_at'],
+                'completed_label' => $status['completed_at'] === null
+                    ? null
+                    : $this->formatSyncRunTime(timestamp: $status['completed_at']),
+                'status' => $status['status'],
+                'message' => $status['message']
+            ],
+            flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE
         );
         exit();
     }
@@ -918,6 +959,7 @@ final class Application
         $assets = $this->assets();
         $csrf = $this->escape(value: $this->csrfToken());
         $syncRuns = $this->runtime->database->syncRuns();
+        $cronStatus = $this->cronStatus();
         $syncStatusHtml = '';
         foreach (
             [
@@ -930,7 +972,7 @@ final class Application
             $syncCompletedAt = $syncRun['completed_at'];
             $syncStatus = $syncCompletedAt === null ? '' : $syncRun['status'];
             $syncStatusLabel = match ($syncStatus) {
-                Database::SYNC_STATUS_SUCCESS => 'erfolgreich',
+                Database::SYNC_STATUS_SUCCESS => '✅',
                 Database::SYNC_STATUS_ERROR => 'fehlgeschlagen',
                 Database::SYNC_STATUS_CANCELLED => 'abgebrochen',
                 default => 'noch nie'
@@ -979,6 +1021,41 @@ final class Application
                 $this->escape(value: $syncText) .
                 '</button>';
         }
+        $cronStartedLabel =
+            $cronStatus['started_at'] === null
+                ? ''
+                : $this->formatSyncRunTime(timestamp: $cronStatus['started_at']);
+        $cronCompletedLabel =
+            $cronStatus['completed_at'] === null
+                ? ''
+                : $this->formatSyncRunTime(timestamp: $cronStatus['completed_at']);
+        $cronVisible = $cronStatus['running'] || $cronCompletedLabel !== '';
+        $cronHiddenClass = $cronVisible ? '' : ' hidden';
+        $cronText = $cronStatus['running']
+            ? 'Cron: läuft' . ($cronStartedLabel === '' ? '' : ' seit ' . $cronStartedLabel)
+            : 'Cron: ' . $cronCompletedLabel . ' · ' . ($cronStatus['status'] === 'success' ? '✅' : 'fehlgeschlagen');
+        $cronTitle = $cronStatus['running'] ? 'Cron-Aktualisierung läuft' : 'Letzte Cron-Aktualisierung';
+        $cronMessage = $cronStatus['running']
+            ? 'Der Cronjob läuft im Hintergrund.'
+            : $cronStatus['message'];
+        $cronIcon = $cronStatus['running'] ? 'info' : ($cronStatus['status'] === 'success' ? 'success' : 'error');
+        $cronStyle = $cronStatus['running']
+            ? 'text-sky-700'
+            : ($cronStatus['status'] === 'success' ? 'text-emerald-700' : 'text-red-700');
+        $cronStatusHtml =
+            '<div data-cron-row class="absolute right-0 top-3 whitespace-nowrap' .
+            $cronHiddenClass .
+            '"><button type="button" data-sync-status data-cron-status data-sync-title="' .
+            $this->escape(value: $cronTitle) .
+            '" data-sync-message="' .
+            $this->escape(value: $cronMessage) .
+            '" data-sync-icon="' .
+            $cronIcon .
+            '" class="' .
+            $cronStyle .
+            '">' .
+            $this->escape(value: $cronText) .
+            '</button></div>';
         $searchValue = $this->escape(value: $search);
         $filterFields =
             '<input type="hidden" name="search" value="' .
@@ -1322,7 +1399,7 @@ final class Application
                                 <button data-theme-toggle type="button" title="Dark Mode aktivieren" aria-label="Dark Mode aktivieren" class="hidden size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100 lg:grid"><i data-lucide="moon" class="size-4"></i></button>
                                 <button data-logout type="button" title="Abmelden" aria-label="Abmelden" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="log-out" class="size-4"></i></button>
                             </div>
-                            <div class="hidden items-center whitespace-nowrap text-[10px] leading-3 lg:flex">{$syncStatusHtml}</div>
+                            <div class="relative hidden h-3 whitespace-nowrap text-[10px] leading-3 lg:block"><div class="flex items-center">{$syncStatusHtml}</div>{$cronStatusHtml}</div>
                         </div>
                     </div>
                 </header>
@@ -1456,6 +1533,124 @@ final class Application
         return new DateTimeImmutable(datetime: $timestamp, timezone: new DateTimeZone(timezone: 'UTC'))
             ->setTimezone(timezone: new DateTimeZone(timezone: date_default_timezone_get()))
             ->format(format: 'd.m. H:i');
+    }
+
+    /** @return array{running: bool, started_at: ?string, completed_at: ?string, status: string, message: string} */
+    private function cronStatus(): array
+    {
+        $path = $this->runtime->root . '/.data/cron.lock';
+        $running = false;
+        $startedAt = '';
+        if (is_file(filename: $path)) {
+            $lockHandle = fopen(filename: $path, mode: 'r');
+            if ($lockHandle !== false && !flock(stream: $lockHandle, operation: LOCK_SH | LOCK_NB)) {
+                $running = true;
+                $startedAt = trim(string: (string) stream_get_contents(stream: $lockHandle));
+            }
+            if ($lockHandle !== false && !$running) {
+                flock(stream: $lockHandle, operation: LOCK_UN);
+            }
+            if ($lockHandle !== false) {
+                fclose(stream: $lockHandle);
+            }
+        }
+        if ($running) {
+            if ($startedAt === '') {
+                $entry = $this->latestCronLogEntry(levelPattern: 'START');
+                $startedAt = $entry['timestamp'] ?? '';
+            }
+            return [
+                'running' => true,
+                'started_at' => $startedAt === '' ? null : $startedAt,
+                'completed_at' => null,
+                'status' => 'running',
+                'message' => 'Der Cronjob läuft im Hintergrund.'
+            ];
+        }
+        $resultPath = $this->runtime->root . '/.data/cron-last-run.json';
+        $result = is_file(filename: $resultPath)
+            ? json_decode(json: (string) file_get_contents(filename: $resultPath), associative: true)
+            : null;
+        if (is_array(value: $result) && in_array(needle: $result['status'] ?? '', haystack: ['success', 'error'], strict: true)) {
+            return [
+                'running' => false,
+                'started_at' => null,
+                'completed_at' => (string) ($result['completed_at'] ?? ''),
+                'status' => (string) $result['status'],
+                'message' => (string) ($result['message'] ?? '')
+            ];
+        }
+        $entry = $this->latestCronLogEntry(levelPattern: 'DONE|ERROR');
+        return [
+            'running' => false,
+            'started_at' => null,
+            'completed_at' => $entry['timestamp'] ?? null,
+            'status' => ($entry['level'] ?? '') === 'DONE' ? 'success' : (($entry['level'] ?? '') === 'ERROR' ? 'error' : ''),
+            'message' => ($entry['level'] ?? '') === 'DONE'
+                ? 'Die Cron-Aktualisierung wurde abgeschlossen.'
+                : 'Die letzte Cron-Aktualisierung ist fehlgeschlagen.'
+        ];
+    }
+
+    /** @return array{timestamp: string, level: string}|null */
+    private function latestCronLogEntry(string $levelPattern): ?array
+    {
+        $logPath = $this->runtime->root . '/.data/cron.log';
+        if (!is_file(filename: $logPath)) {
+            return null;
+        }
+        $logHandle = fopen(filename: $logPath, mode: 'r');
+        if ($logHandle === false) {
+            return null;
+        }
+        $position = (int) filesize(filename: $logPath);
+        $buffer = '';
+        while ($position > 0) {
+            $chunkSize = min(8192, $position);
+            $position -= $chunkSize;
+            fseek(stream: $logHandle, offset: $position);
+            $buffer = (string) fread(stream: $logHandle, length: $chunkSize) . $buffer;
+            if (
+                preg_match_all(
+                    pattern: '/^\[([0-9-]{10} [0-9:]{8})\] (' . $levelPattern . ')\s/m',
+                    subject: $buffer,
+                    matches: $matches
+                ) > 0
+            ) {
+                $timestamp = (string) end(array: $matches[1]);
+                $level = (string) end(array: $matches[2]);
+                fclose(stream: $logHandle);
+                return [
+                    'timestamp' => new DateTimeImmutable(
+                        datetime: $timestamp,
+                        timezone: new DateTimeZone(timezone: date_default_timezone_get())
+                    )
+                        ->setTimezone(timezone: new DateTimeZone(timezone: 'UTC'))
+                        ->format(format: 'Y-m-d H:i:s'),
+                    'level' => $level
+                ];
+            }
+            $buffer = substr(string: $buffer, offset: 0, length: 8192);
+        }
+        fclose(stream: $logHandle);
+        return null;
+    }
+
+    private function writeCronCompletion(string $status, string $message): void
+    {
+        $path = $this->runtime->root . '/.data/cron-last-run.json';
+        $temporaryPath = $path . '.tmp';
+        $data = json_encode(
+            value: ['status' => $status, 'message' => $message, 'completed_at' => gmdate(format: 'Y-m-d H:i:s')],
+            flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE
+        );
+        if (file_put_contents(filename: $temporaryPath, data: $data, flags: LOCK_EX) === false) {
+            throw new RuntimeException(message: 'Das Cron-Ergebnis konnte nicht geschrieben werden.');
+        }
+        chmod(filename: $temporaryPath, permissions: 0600);
+        if (!rename(from: $temporaryPath, to: $path)) {
+            throw new RuntimeException(message: 'Das Cron-Ergebnis konnte nicht veröffentlicht werden.');
+        }
     }
 
     /** @return array{css: string, js: string} */

@@ -380,6 +380,10 @@ final class ReweClientTest extends TestCase
         );
         $this->assertContains('Petersilie', $method->invoke($client, 'Petersilie glatt/Schnittlauch'));
         $this->assertContains('Schnittlauch', $method->invoke($client, 'Petersilie glatt/Schnittlauch'));
+        $this->assertContains('Rinder-Minutensteaks', $method->invoke($client, 'Bio Rinderhüftsteak'));
+        $this->assertContains('Paprika geräuchert', $method->invoke($client, 'Paprikapulver, geräuchert'));
+        $this->assertContains('Hot Dog Rolls', $method->invoke($client, 'Hot-Dog-Brötchen'));
+        $this->assertContains('Kabeljaufilet', $method->invoke($client, 'Kabeljaufilet ohne Haut'));
     }
 
     public function testCloudflareBasketChallengeHasSpecificError(): void

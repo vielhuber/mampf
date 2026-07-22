@@ -48,6 +48,42 @@ document.querySelectorAll('[data-sync-status]').forEach($button => {
     });
 });
 
+let $cronStatus = document.querySelector('[data-cron-status]');
+if ($cronStatus !== null) {
+    let $cronRow = document.querySelector('[data-cron-row]');
+    let updateCronStatus = async () => {
+        try {
+            let response = await fetch('/cron/status');
+            if (!response.ok) {
+                return;
+            }
+            let status = await response.json();
+            let startedLabel = typeof status.started_label === 'string' ? status.started_label : '';
+            let completedLabel = typeof status.completed_label === 'string' ? status.completed_label : '';
+            let visible = status.running === true || completedLabel !== '';
+            $cronRow?.classList.toggle('hidden', !visible);
+            if (!visible) {
+                return;
+            }
+            let running = status.running === true;
+            let success = status.status === 'success';
+            $cronStatus.classList.toggle('text-sky-700', running);
+            $cronStatus.classList.toggle('text-emerald-700', !running && success);
+            $cronStatus.classList.toggle('text-red-700', !running && !success);
+            $cronStatus.textContent = running
+                ? `Cron: läuft${startedLabel === '' ? '' : ` seit ${startedLabel}`}`
+                : `Cron: ${completedLabel} · ${success ? '✅' : 'fehlgeschlagen'}`;
+            $cronStatus.dataset.syncTitle = running ? 'Cron-Aktualisierung läuft' : 'Letzte Cron-Aktualisierung';
+            $cronStatus.dataset.syncMessage = running
+                ? `Der Cronjob läuft${startedLabel === '' ? '' : ` seit ${startedLabel}`} im Hintergrund.`
+                : status.message || 'Die letzte Cron-Aktualisierung wurde abgeschlossen.';
+            $cronStatus.dataset.syncIcon = running ? 'info' : success ? 'success' : 'error';
+        } catch {
+        }
+    };
+    window.setInterval(updateCronStatus, 15000);
+}
+
 let $loginForm = document.querySelector('[data-login-form]');
 if ($loginForm !== null) {
     $loginForm.addEventListener('submit', async event => {
