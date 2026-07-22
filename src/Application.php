@@ -1032,7 +1032,7 @@ final class Application
         $cronVisible = $cronStatus['running'] || $cronCompletedLabel !== '';
         $cronHiddenClass = $cronVisible ? '' : ' hidden';
         $cronText = $cronStatus['running']
-            ? 'Cron: läuft' . ($cronStartedLabel === '' ? '' : ' seit ' . $cronStartedLabel)
+            ? 'Cron: läuft' . ($cronStartedLabel === '' ? '' : ' seit ' . $cronStartedLabel) . ' · ⚠️'
             : 'Cron: ' . $cronCompletedLabel . ' · ' . ($cronStatus['status'] === 'success' ? '✅' : 'fehlgeschlagen');
         $cronTitle = $cronStatus['running'] ? 'Cron-Aktualisierung läuft' : 'Letzte Cron-Aktualisierung';
         $cronMessage = $cronStatus['running']

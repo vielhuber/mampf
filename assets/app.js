@@ -71,7 +71,7 @@ if ($cronStatus !== null) {
             $cronStatus.classList.toggle('text-emerald-700', !running && success);
             $cronStatus.classList.toggle('text-red-700', !running && !success);
             $cronStatus.textContent = running
-                ? `Cron: läuft${startedLabel === '' ? '' : ` seit ${startedLabel}`}`
+                ? `Cron: läuft${startedLabel === '' ? '' : ` seit ${startedLabel}`} · ⚠️`
                 : `Cron: ${completedLabel} · ${success ? '✅' : 'fehlgeschlagen'}`;
             $cronStatus.dataset.syncTitle = running ? 'Cron-Aktualisierung läuft' : 'Letzte Cron-Aktualisierung';
             $cronStatus.dataset.syncMessage = running
