@@ -10,7 +10,7 @@ use RuntimeException;
 
 final class ReweClient
 {
-    public const PRODUCT_SEARCH_VERSION = 7;
+    public const PRODUCT_SEARCH_VERSION = 10;
 
     private const BASE_URL = 'https://www.rewe.de';
     private const SEARCH_URL = self::BASE_URL . '/shop/productList';
@@ -21,7 +21,7 @@ final class ReweClient
     private const EMPTY_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7;
     private const CATALOG_PAGE_SIZE = 500;
     private const CATALOG_MAX_PAGES = 100;
-    private const CATALOG_CACHE_VERSION = 1;
+    private const CATALOG_CACHE_VERSION = 3;
     private const CATALOG_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7;
     private const CATALOG_SORTINGS = [
         'RELEVANCE_DESC' => 'Relevanz',
@@ -144,6 +144,7 @@ final class ReweClient
         'rinderhuftsteak' => 'Rinder-Minutensteaks',
         'risottoreis' => 'Risotto Reis',
         'rosmarinzweig' => 'Rosmarin',
+        'sahne' => 'Sahne zum Kochen',
         'sahnemeerrettich' => 'Sahne Meerrettich',
         'sambal badjak' => 'Sambal Oelek',
         'seehecht' => 'Alaska Seelachsfilet',
@@ -210,11 +211,30 @@ final class ReweClient
         'nudeln',
         'paste',
         'reis',
+        'sahne',
         'salat',
         'sosse',
         'streifen',
         'tomaten',
         'tortillas'
+    ];
+    private const PRODUCT_CARRIER_TERMS = [
+        'aufstrich',
+        'bonbon',
+        'chips',
+        'dressing',
+        'frischkase',
+        'heringsfilet',
+        'joghurt',
+        'keks',
+        'kuchen',
+        'meerrettich',
+        'pudding',
+        'saure',
+        'sosse',
+        'suppe',
+        'torte',
+        'wurst'
     ];
     private const SEARCH_DELAY_MIN_MICROSECONDS = 1_500_000;
     private const SEARCH_DELAY_MAX_MICROSECONDS = 3_000_000;
@@ -245,12 +265,19 @@ final class ReweClient
         return self::SEARCH_URL . '?' . http_build_query(data: ['search' => $query]);
     }
 
-    public function downloadProductCatalog(?callable $progress = null, ?callable $checkpoint = null): int
+    /** @param list<int> $retryDelays */
+    public function downloadProductCatalog(
+        ?callable $progress = null,
+        ?callable $checkpoint = null,
+        bool $refresh = false,
+        array $retryDelays = [],
+        ?callable $retryProgress = null
+    ): int
     {
-        if ($this->productCatalogLoaded) {
+        if ($this->productCatalogLoaded && (!$refresh || $this->productCatalogFile === null)) {
             return count(value: $this->productCatalog);
         }
-        if ($this->productCatalogFile !== null && is_file(filename: $this->productCatalogFile)) {
+        if (!$refresh && $this->productCatalogFile !== null && is_file(filename: $this->productCatalogFile)) {
             $cookieFiles = array_values(
                 array: array_filter(
                     array: [$this->cookieFile, dirname(path: $this->cookieFile) . '/rewe-account.json'],
@@ -280,7 +307,14 @@ final class ReweClient
                 }
             }
         }
-        $this->ensureShopSession();
+        $this->retryReweAccess(
+            operation: function (): void {
+                $this->ensureShopSession();
+            },
+            retryDelays: $retryDelays,
+            retryProgress: $retryProgress,
+            checkpoint: $checkpoint
+        );
         $productsByListingId = [];
         $pagesPerSorting = null;
         $completedPages = 0;
@@ -288,23 +322,30 @@ final class ReweClient
             $page = 1;
             $pageCount = 1;
             while ($page <= $pageCount) {
-                $checkpoint?->__invoke();
-                $response = $this->request(
-                    url: self::SEARCH_API_URL .
-                        '?' .
-                        http_build_query(
-                            data: [
-                                'search' => '*',
-                                'objectsPerPage' => self::CATALOG_PAGE_SIZE,
-                                'page' => $page,
-                                'sorting' => $sorting
-                            ]
-                        ),
-                    headers: ['Accept: application/vnd.rewe.digital.products+json;client=web;version=2']
+                $response = $this->retryReweAccess(
+                    operation: function () use ($page, $sorting): HttpResponse {
+                        $response = $this->request(
+                            url: self::SEARCH_API_URL .
+                                '?' .
+                                http_build_query(
+                                    data: [
+                                        'search' => '*',
+                                        'objectsPerPage' => self::CATALOG_PAGE_SIZE,
+                                        'page' => $page,
+                                        'sorting' => $sorting
+                                    ]
+                                ),
+                            headers: ['Accept: application/vnd.rewe.digital.products+json;client=web;version=2']
+                        );
+                        if ($this->isCloudflareChallenge(response: $response)) {
+                            throw ReweAccessException::cloudflareChallenge();
+                        }
+                        return $response;
+                    },
+                    retryDelays: $retryDelays,
+                    retryProgress: $retryProgress,
+                    checkpoint: $checkpoint
                 );
-                if ($this->isCloudflareChallenge(response: $response)) {
-                    throw ReweAccessException::cloudflareChallenge();
-                }
                 if ($response->status !== 200) {
                     throw new RuntimeException(
                         message: 'Der REWE-Produktbestand antwortete mit HTTP ' . $response->status . '.'
@@ -364,6 +405,37 @@ final class ReweClient
             rename(from: $temporaryFile, to: $this->productCatalogFile);
         }
         return $this->hydrateProductCatalog(products: $products);
+    }
+
+    /** @param list<int> $retryDelays */
+    private function retryReweAccess(
+        callable $operation,
+        array $retryDelays,
+        ?callable $retryProgress,
+        ?callable $checkpoint
+    ): mixed {
+        $attempt = 1;
+        $totalAttempts = count(value: $retryDelays) + 1;
+        while (true) {
+            $checkpoint?->__invoke();
+            try {
+                return $operation();
+            } catch (ReweAccessException $exception) {
+                $delaySeconds = $retryDelays[$attempt - 1] ?? null;
+                if (!is_int(value: $delaySeconds) || $delaySeconds < 0) {
+                    throw $exception;
+                }
+                $attempt++;
+                $retryProgress?->__invoke($delaySeconds, $attempt, $totalAttempts);
+                $remainingSeconds = $delaySeconds;
+                while ($remainingSeconds > 0) {
+                    $sleepSeconds = min(5, $remainingSeconds);
+                    sleep(seconds: $sleepSeconds);
+                    $remainingSeconds -= $sleepSeconds;
+                    $checkpoint?->__invoke();
+                }
+            }
+        }
     }
 
     /** @param list<array<string, mixed>> $products */
@@ -452,6 +524,109 @@ final class ReweClient
     }
 
     /**
+     * @param list<array<string, mixed>> $products
+     * @return array<string, mixed>|null
+     */
+    public function selectProductForIngredient(string $name, mixed $amount, string $unit, array $products): ?array
+    {
+        $requiredAmount = is_numeric(value: str_replace(search: ',', replace: '.', subject: (string) $amount))
+            ? (float) str_replace(search: ',', replace: '.', subject: (string) $amount)
+            : 0.0;
+        $requiredUnit = str_replace(
+            search: ['Ü', '.'],
+            replace: ['UE', ''],
+            subject: mb_strtoupper(string: trim(string: $unit))
+        );
+        $requiredUnit = match ($requiredUnit) {
+            'KG' => 'G',
+            'L' => 'ML',
+            'ST', 'STK', 'STUECK' => 'STK',
+            default => $requiredUnit
+        };
+        if (strtoupper(string: trim(string: $unit)) === 'KG') {
+            $requiredAmount *= 1000;
+        }
+        if (strtoupper(string: trim(string: $unit)) === 'L') {
+            $requiredAmount *= 1000;
+        }
+        $bestProduct = null;
+        $bestScore = PHP_INT_MIN;
+        foreach ($products as $product) {
+            if (!is_array(value: $product)) {
+                continue;
+            }
+            $productIsCompatible = false;
+            foreach ($this->productSearchQueries(name: $name) as $query) {
+                if ($this->productIsCompatible(query: $query, productName: (string) ($product['name'] ?? ''))) {
+                    $productIsCompatible = true;
+                    break;
+                }
+            }
+            if (!$productIsCompatible) {
+                continue;
+            }
+            $packageAmount = is_numeric(value: $product['base_quantity'] ?? null)
+                ? (float) $product['base_quantity']
+                : 0.0;
+            $packageUnit = mb_strtoupper(string: trim(string: (string) ($product['quantity_type'] ?? '')));
+            if ($packageAmount <= 0 || $packageUnit === '') {
+                $productName = (string) ($product['name'] ?? '');
+                if (
+                    preg_match(
+                        pattern: '~(?<![\d,\.])(\d+(?:[\.,]\d+)?)\s*(kg|g|ml|l|st(?:ue|ü)ck|stk)\b~iu',
+                        subject: $productName,
+                        matches: $packageMatches
+                    ) === 1
+                ) {
+                    $packageAmount = (float) str_replace(search: ',', replace: '.', subject: $packageMatches[1]);
+                    $packageUnit = mb_strtoupper(string: $packageMatches[2]);
+                }
+            }
+            if ($packageUnit === 'KG') {
+                $packageAmount *= 1000;
+            }
+            if ($packageUnit === 'L') {
+                $packageAmount *= 1000;
+            }
+            $packageUnit = match ($packageUnit) {
+                'KG' => 'G',
+                'L' => 'ML',
+                'ST', 'STUECK', 'STÜCK' => 'STK',
+                default => $packageUnit
+            };
+            $quantity = 1;
+            $selectionScore = (int) ($product['score'] ?? 0);
+            $continuousUnits = ['G', 'ML'];
+            if (
+                $requiredAmount > 0 &&
+                in_array(needle: $requiredUnit, haystack: $continuousUnits, strict: true) &&
+                in_array(needle: $packageUnit, haystack: $continuousUnits, strict: true) &&
+                $packageAmount > 0
+            ) {
+                $quantity = max(1, (int) ceil(num: $requiredAmount / $packageAmount));
+                $wasteRatio = (($quantity * $packageAmount) - $requiredAmount) / $requiredAmount;
+                $selectionScore += 50 - min(50, (int) round(num: $wasteRatio * 20));
+            }
+            if ($requiredAmount > 0 && $requiredUnit === 'STK' && $packageAmount > 0) {
+                if ($packageUnit === 'STK') {
+                    $quantity = max(1, (int) ceil(num: $requiredAmount / $packageAmount));
+                    $selectionScore += 60;
+                }
+                if (in_array(needle: $packageUnit, haystack: $continuousUnits, strict: true)) {
+                    $selectionScore += max(0, 50 - (int) round(num: $packageAmount / 10));
+                }
+            }
+            if ($selectionScore <= $bestScore) {
+                continue;
+            }
+            $bestScore = $selectionScore;
+            $bestProduct = $product;
+            $bestProduct['quantity'] = $quantity;
+        }
+        return $bestProduct;
+    }
+
+    /**
      * Replace the current REWE basket with ingredients from one calendar week.
      *
      * @return array<string, mixed>
@@ -462,6 +637,7 @@ final class ReweClient
         if ($recipes === []) {
             throw new RuntimeException(message: 'Dieser Woche sind keine Rezepte zugeordnet.');
         }
+        $this->downloadProductCatalog();
         $this->ensureShopSession();
         $items = [];
         $missing = [];
@@ -481,17 +657,15 @@ final class ReweClient
                     $missing[] = (string) $recipe['name'] . ': unbekannte Zutat';
                     continue;
                 }
-                $previousListingId = trim(string: (string) ($ingredient['selected']['listing_id'] ?? ''));
                 $products = $this->productsForIngredient(name: $name, refresh: true);
                 $ingredient['search_url'] = $this->searchUrl(query: $name);
                 $ingredient['products'] = $products;
-                $ingredient['selected'] = $products[0] ?? null;
-                foreach ($products as $product) {
-                    if ((string) ($product['listing_id'] ?? '') === $previousListingId) {
-                        $ingredient['selected'] = $product;
-                        break;
-                    }
-                }
+                $ingredient['selected'] = $this->selectProductForIngredient(
+                    name: $name,
+                    amount: $ingredient['amount'] ?? null,
+                    unit: (string) ($ingredient['unit'] ?? ''),
+                    products: $products
+                );
                 $selected = is_array(value: $ingredient['selected']) ? $ingredient['selected'] : null;
                 $listingId = is_array(value: $selected) ? trim(string: (string) ($selected['listing_id'] ?? '')) : '';
                 if ($listingId === '') {
@@ -506,7 +680,7 @@ final class ReweClient
                         'quantity' => 0
                     ];
                 }
-                $items[$listingId]['quantity']++;
+                $items[$listingId]['quantity'] += max(1, (int) ($selected['quantity'] ?? 1));
             }
             unset($ingredient);
             $this->database->updateIngredients(recipeId: (int) $recipe['id'], ingredients: $ingredients);
@@ -640,6 +814,9 @@ final class ReweClient
             if (str_starts_with(haystack: $url, needle: '/')) {
                 $url = self::BASE_URL . $url;
             }
+            if (!$this->productIsCompatible(query: $query, productName: $name)) {
+                continue;
+            }
             $products[] = [
                 'product_id' => $productId,
                 'listing_id' => $listingId,
@@ -676,7 +853,13 @@ final class ReweClient
             $detailsUrl = trim(string: (string) ($hit['detailsUrl'] ?? ''));
             $pricing = is_array(value: $hit['pricing'] ?? null) ? $hit['pricing'] : [];
             $tags = is_array(value: $hit['tags'] ?? null) ? $hit['tags'] : [];
-            if ($listingId === '' || $name === '' || $detailsUrl === '') {
+            $orderLimit = $hit['orderLimit'] ?? null;
+            if (
+                $listingId === '' ||
+                $name === '' ||
+                $detailsUrl === '' ||
+                ($orderLimit !== null && (int) $orderLimit < 1)
+            ) {
                 continue;
             }
             $url = $detailsUrl;
@@ -690,6 +873,9 @@ final class ReweClient
                 (is_array(value: $pricing['discount'] ?? null) && $pricing['discount'] !== []) ||
                 in_array(needle: 'discounted', haystack: $tags, strict: true);
             $price = $pricing['currentRetailPrice'] ?? null;
+            if (!$this->productIsCompatible(query: $query, productName: $name)) {
+                continue;
+            }
             $products[] = [
                 'product_id' => $productId,
                 'listing_id' => $listingId,
@@ -698,6 +884,11 @@ final class ReweClient
                 'image' => (string) ($hit['imageURL'] ?? ''),
                 'price' => is_numeric(value: $price) ? (float) $price / 100 : null,
                 'discount' => $discount,
+                'base_quantity' => is_numeric(value: $hit['baseQuantity'] ?? null)
+                    ? (float) $hit['baseQuantity']
+                    : null,
+                'quantity_type' => trim(string: (string) ($hit['quantityType'] ?? '')),
+                'grammage' => trim(string: (string) ($pricing['grammage'] ?? '')),
                 'score' => $this->productScore(query: $query, productName: $name, discount: $discount)
             ];
         }
@@ -717,7 +908,40 @@ final class ReweClient
                 break;
             }
         }
+        $listingIds = [];
         $listingQuantities = [];
+        $dataMarker = 'const data = ';
+        $dataOffset = 0;
+        while (($dataPosition = strpos(haystack: $html, needle: $dataMarker, offset: $dataOffset)) !== false) {
+            $dataStart = $dataPosition + strlen(string: $dataMarker);
+            $dataEnd = strpos(haystack: $html, needle: ";\n", offset: $dataStart);
+            if ($dataEnd === false) {
+                break;
+            }
+            $data = json_decode(json: substr(string: $html, offset: $dataStart, length: $dataEnd - $dataStart), associative: true);
+            $lineItems = is_array(value: $data['lineItems'] ?? null) ? $data['lineItems'] : [];
+            if (is_array(value: $data) && $lineItems !== []) {
+                $basketId = trim(string: (string) ($data['id'] ?? $basketId));
+                foreach ($lineItems as $lineItem) {
+                    if (!is_array(value: $lineItem)) {
+                        continue;
+                    }
+                    $product = is_array(value: $lineItem['product'] ?? null) ? $lineItem['product'] : [];
+                    $listing = is_array(value: $product['listing'] ?? null) ? $product['listing'] : [];
+                    $listingId = trim(string: (string) ($listing['listingId'] ?? ''));
+                    if ($listingId === '') {
+                        continue;
+                    }
+                    $listingIds[$listingId] = true;
+                    $quantity = (int) ($lineItem['quantity'] ?? 0);
+                    if ($quantity > 0) {
+                        $listingQuantities[$listingId] = $quantity;
+                    }
+                }
+                break;
+            }
+            $dataOffset = $dataEnd + 2;
+        }
         if (
             preg_match(
                 pattern: '~listingIdToQuantityLookup\s*=\s*(\{.*?\})\s*;~s',
@@ -730,7 +954,9 @@ final class ReweClient
                 foreach ($lookup as $listingId => $value) {
                     $quantity = is_array(value: $value) ? (int) ($value['quantity'] ?? 0) : (int) $value;
                     if ($quantity > 0) {
-                        $listingQuantities[(string) $listingId] = $quantity;
+                        $listingId = (string) $listingId;
+                        $listingIds[$listingId] = true;
+                        $listingQuantities[$listingId] = $quantity;
                     }
                 }
             }
@@ -744,14 +970,18 @@ final class ReweClient
                 ) > 0
             ) {
                 foreach ($quantityMatches as $quantityMatch) {
-                    $listingQuantities[$quantityMatch[1]] = (int) $quantityMatch[2];
+                    $quantity = (int) $quantityMatch[2];
+                    if ($quantity > 0) {
+                        $listingIds[$quantityMatch[1]] = true;
+                        $listingQuantities[$quantityMatch[1]] = $quantity;
+                    }
                 }
             }
         }
         $loggedIn = preg_match(pattern: '~(?:&quot;|")isLoggedIn(?:&quot;|")\s*:\s*true~i', subject: $html) === 1;
         return [
             'id' => $basketId,
-            'listing_ids' => array_keys(array: $listingQuantities),
+            'listing_ids' => array_keys(array: $listingIds),
             'listing_quantities' => $listingQuantities,
             'logged_in' => $loggedIn
         ];
@@ -775,6 +1005,24 @@ final class ReweClient
         }
         $score -= min(50, max(0, strlen(string: $normalizedName) - strlen(string: $normalizedQuery)));
         return $score + ($discount ? 5 : 0);
+    }
+
+    private function productIsCompatible(string $query, string $productName): bool
+    {
+        if ($query === '*') {
+            return true;
+        }
+        $normalizedQuery = $this->normalize(value: $query);
+        $normalizedName = $this->normalize(value: $productName);
+        foreach (self::PRODUCT_CARRIER_TERMS as $term) {
+            if (
+                str_contains(haystack: $normalizedName, needle: $term) &&
+                !str_contains(haystack: $normalizedQuery, needle: $term)
+            ) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** @return list<array<string, mixed>> */
@@ -822,6 +1070,9 @@ final class ReweClient
                 $catalogEntry = $this->productCatalog[$catalogIndex];
                 $product = $catalogEntry['product'];
                 $listingId = (string) ($product['listing_id'] ?? '');
+                if (!$this->productIsCompatible(query: $query, productName: (string) ($product['name'] ?? ''))) {
+                    continue;
+                }
                 $product['score'] = $this->productScore(
                     query: $query,
                     productName: (string) ($product['name'] ?? ''),
@@ -937,6 +1188,14 @@ final class ReweClient
                     $addQuery($queryPart);
                 }
             }
+        }
+        foreach ($queries as $query) {
+            $withEnglishNoodles = preg_replace(
+                pattern: '~nudeln?\b~iu',
+                replacement: ' Noodles',
+                subject: $query
+            );
+            $addQuery(is_string(value: $withEnglishNoodles) ? $withEnglishNoodles : $query);
         }
         foreach ($queries as $query) {
             $alias = self::SEARCH_QUERY_ALIASES[$this->normalize(value: $query)] ?? null;

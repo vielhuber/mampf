@@ -178,6 +178,64 @@ document.querySelectorAll('[data-confirm]').forEach($form => {
     });
 });
 
+document.addEventListener('submit', async event => {
+    let $form = event.target.closest?.('[data-week-assignment-form]');
+    if ($form === null || $form === undefined) {
+        return;
+    }
+    event.preventDefault();
+    let $button = $form.querySelector('[data-week-assignment-button]');
+    let $action = $form.querySelector('[data-week-assignment-action]');
+    if ($button.disabled) {
+        return;
+    }
+    $button.disabled = true;
+    $button.classList.add('opacity-60');
+    try {
+        let response = await fetch('/feedback', {
+            method: 'POST',
+            body: new FormData($form)
+        });
+        let result = await response.json().catch(() => null);
+        if (!response.ok || result === null) {
+            throw new Error(result?.error || 'Die Wochenzuordnung konnte nicht gespeichert werden.');
+        }
+        let selected = result.selected === true;
+        let selectedClasses = ['border-emerald-700', 'bg-emerald-700', 'text-white', 'hover:bg-emerald-800'];
+        let unselectedClasses = ['border-stone-300', 'bg-white', 'text-stone-700', 'hover:bg-stone-50'];
+        $button.classList.remove(...selectedClasses, ...unselectedClasses);
+        $button.classList.add(...(selected ? selectedClasses : unselectedClasses));
+        $button.title = selected ? 'Entfernen' : 'Hinzufügen';
+        $button.innerHTML = `<i data-lucide="${selected ? 'minus' : 'plus'}" class="size-4"></i>${selected ? 'Entfernen' : 'Hinzufügen'}`;
+        $action.value = selected ? 'remove' : 'assign';
+        createIcons({ icons, root: $button });
+
+        let $orderButton = document.querySelector('[data-order-button]');
+        if ($orderButton !== null) {
+            let hasRecipes = Number(result.week_recipe_count) > 0;
+            let enabledClasses = ['bg-emerald-700', 'text-white', 'hover:bg-emerald-800'];
+            let disabledClasses = ['bg-stone-300', 'text-stone-500'];
+            $orderButton.classList.remove(...enabledClasses, ...disabledClasses);
+            $orderButton.classList.add(...(hasRecipes ? enabledClasses : disabledClasses));
+            $orderButton.disabled = !hasRecipes;
+            $orderButton.title = hasRecipes
+                ? 'Ausgewählte Woche bei REWE bestellen'
+                : 'Füge dieser Woche zuerst ein Rezept hinzu';
+            if (hasRecipes) {
+                $orderButton.removeAttribute('aria-disabled');
+            }
+            if (!hasRecipes) {
+                $orderButton.setAttribute('aria-disabled', 'true');
+            }
+        }
+    } catch (error) {
+        showError(error instanceof Error ? error.message : 'Die Wochenzuordnung konnte nicht gespeichert werden.');
+    } finally {
+        $button.disabled = false;
+        $button.classList.remove('opacity-60');
+    }
+});
+
 let $ingredientsPopover = document.querySelector('[data-hover-popover]');
 if ($ingredientsPopover !== null) {
     let $activeIngredientsTrigger = null;
@@ -433,6 +491,9 @@ if ($taskForm !== null) {
     };
     let timeInterval = window.setInterval(updateTime, 1000);
     let applyUpdate = update => {
+        if (terminal) {
+            return;
+        }
         let nextProgress = Math.max(1, Math.min(100, Number(update.progress) || 1));
         let now = performance.now();
         if (sampledProgress === 0) {
@@ -558,10 +619,40 @@ if ($taskForm !== null) {
             if (error instanceof DOMException && error.name === 'AbortError') {
                 return;
             }
+            if (terminal) {
+                return;
+            }
+            $status.textContent = 'Verbindung unterbrochen. Das Ergebnis wird vom Server abgerufen.';
+            let taskId = String(new FormData($taskForm).get('task_id') || '');
+            for (let attempt = 0; attempt < 900 && !terminal && !controller.signal.aborted; attempt += 1) {
+                try {
+                    let statusResponse = await fetch(`/task/status?task_id=${encodeURIComponent(taskId)}`, {
+                        cache: 'no-store',
+                        signal: controller.signal
+                    });
+                    if (statusResponse.status === 202) {
+                        await new Promise(resolvePromise => window.setTimeout(resolvePromise, 1000));
+                        continue;
+                    }
+                    if (statusResponse.ok) {
+                        applyUpdate(await statusResponse.json());
+                        break;
+                    }
+                    break;
+                } catch (statusError) {
+                    if (statusError instanceof DOMException && statusError.name === 'AbortError') {
+                        return;
+                    }
+                }
+                await new Promise(resolvePromise => window.setTimeout(resolvePromise, 1000));
+            }
+            if (terminal || controller.signal.aborted) {
+                return;
+            }
             applyUpdate({
                 type: 'error',
                 progress: 100,
-                message: error instanceof Error ? error.message : 'Der Vorgang ist fehlgeschlagen.'
+                message: 'Die Verbindung zum Server wurde unterbrochen und das Ergebnis konnte nicht abgerufen werden.'
             });
         }
     };

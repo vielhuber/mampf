@@ -11,6 +11,8 @@ use RuntimeException;
 
 final class Application
 {
+    private const CRON_REWE_RETRY_DELAYS_SECONDS = [60, 120, 240];
+
     public function __construct(private readonly Runtime $runtime) {}
 
     public function run(): never
@@ -32,6 +34,9 @@ final class Application
         }
         if ($path === '/cron/status') {
             $this->handleCronStatus();
+        }
+        if ($path === '/task/status') {
+            $this->handleTaskStatus();
         }
         if ($path === '/task/cancel') {
             $this->handleTaskCancellation();
@@ -276,6 +281,20 @@ final class Application
                             $productCount
                         )
                     );
+                },
+                catalogRetryDelays: self::CRON_REWE_RETRY_DELAYS_SECONDS,
+                catalogRetry: static function (int $delaySeconds, int $nextAttempt, int $totalAttempts) use (
+                    $appendLog
+                ): void {
+                    $appendLog(
+                        'WARN',
+                        sprintf(
+                            'REWE-Zugriff blockiert. Versuch %d/%d startet in %d Sekunden.',
+                            $nextAttempt,
+                            $totalAttempts,
+                            $delaySeconds
+                        )
+                    );
                 }
             );
             $this->writeMissingIngredientLog(result: $ingredients);
@@ -373,21 +392,19 @@ final class Application
         $category = trim(string: (string) ($_POST['category'] ?? ''));
         $sort = (string) ($_POST['sort'] ?? 'favorites_desc');
         try {
-            if ($action === 'assign') {
-                $this->runtime->database->assignRecipe(
+            if (in_array(needle: $action, haystack: ['assign', 'remove'], strict: true)) {
+                $this->updateWeekAssignment(
+                    action: $action,
                     recipeId: (int) ($_POST['recipe_id'] ?? 0),
                     year: $year,
                     week: $week
                 );
-                $this->flash(type: 'success', message: 'Rezept zu Kalenderwoche ' . $week . ' hinzugefügt.');
-            }
-            if ($action === 'remove') {
-                $this->runtime->database->removeRecipe(
-                    recipeId: (int) ($_POST['recipe_id'] ?? 0),
-                    year: $year,
-                    week: $week
+                $this->flash(
+                    type: 'success',
+                    message: $action === 'assign'
+                        ? 'Rezept zu Kalenderwoche ' . $week . ' hinzugefügt.'
+                        : 'Rezept aus Kalenderwoche ' . $week . ' entfernt.'
                 );
-                $this->flash(type: 'success', message: 'Rezept aus Kalenderwoche ' . $week . ' entfernt.');
             }
             if ($action === 'reset') {
                 if ((string) ($_POST['confirmation'] ?? '') !== 'DELETE') {
@@ -470,6 +487,24 @@ final class Application
                 echo json_encode(value: ['note' => $note], flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
                 exit();
             }
+            if (in_array(needle: $action, haystack: ['assign', 'remove'], strict: true)) {
+                $year = max(2020, min(2100, (int) ($_POST['year'] ?? date(format: 'o'))));
+                $week = max(1, min(53, (int) ($_POST['week'] ?? date(format: 'W'))));
+                $weekRecipeCount = $this->updateWeekAssignment(
+                    action: $action,
+                    recipeId: $recipeId,
+                    year: $year,
+                    week: $week
+                );
+                echo json_encode(
+                    value: [
+                        'selected' => $action === 'assign',
+                        'week_recipe_count' => $weekRecipeCount
+                    ],
+                    flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE
+                );
+                exit();
+            }
             throw new RuntimeException(message: 'Ungültige Aktion.');
         } catch (RuntimeException $exception) {
             http_response_code(response_code: 422);
@@ -479,6 +514,19 @@ final class Application
             );
             exit();
         }
+    }
+
+    private function updateWeekAssignment(string $action, int $recipeId, int $year, int $week): int
+    {
+        if ($action === 'assign') {
+            $this->runtime->database->assignRecipe(recipeId: $recipeId, year: $year, week: $week);
+            return $this->runtime->database->weekRecipeCount(year: $year, week: $week);
+        }
+        if ($action === 'remove') {
+            $this->runtime->database->removeRecipe(recipeId: $recipeId, year: $year, week: $week);
+            return $this->runtime->database->weekRecipeCount(year: $year, week: $week);
+        }
+        throw new RuntimeException(message: 'Ungültige Aktion.');
     }
 
     private function handleTask(): never
@@ -541,7 +589,7 @@ final class Application
         }
         session_write_close();
         set_time_limit(seconds: 0);
-        ignore_user_abort(false);
+        ignore_user_abort(true);
         header(header: 'Content-Type: text/event-stream; charset=utf-8');
         header(header: 'Cache-Control: no-cache, no-store');
         header(header: 'X-Accel-Buffering: no');
@@ -664,7 +712,8 @@ final class Application
                 progress: 100,
                 message: $message,
                 type: $completionType,
-                returnUrl: (string) $task['return_url']
+                returnUrl: (string) $task['return_url'],
+                taskId: $taskId
             );
         } catch (TaskCancelledException) {
             if ($activeSyncType !== null) {
@@ -681,7 +730,8 @@ final class Application
                 progress: $taskProgress,
                 message: 'Vorgang wurde gestoppt.',
                 type: 'cancelled',
-                returnUrl: (string) $task['return_url']
+                returnUrl: (string) $task['return_url'],
+                taskId: $taskId
             );
         } catch (RuntimeException $exception) {
             $help = null;
@@ -716,9 +766,42 @@ final class Application
                 message: $exception->getMessage(),
                 type: 'error',
                 returnUrl: (string) $task['return_url'],
-                help: $help
+                help: $help,
+                taskId: $taskId
             );
         }
+        exit();
+    }
+
+    private function handleTaskStatus(): never
+    {
+        header(header: 'Content-Type: application/json; charset=utf-8');
+        header(header: 'Cache-Control: no-store');
+        if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
+            http_response_code(response_code: 405);
+            echo json_encode(value: ['error' => 'Methode nicht erlaubt.'], flags: JSON_THROW_ON_ERROR);
+            exit();
+        }
+        $taskId = (string) ($_GET['task_id'] ?? '');
+        if (preg_match(pattern: '/^[a-f0-9]{32}$/', subject: $taskId) !== 1) {
+            http_response_code(response_code: 422);
+            echo json_encode(value: ['error' => 'Ungültige Aufgabe.'], flags: JSON_THROW_ON_ERROR);
+            exit();
+        }
+        $resultPath = $this->taskResultPath(taskId: $taskId);
+        if (!is_file(filename: $resultPath)) {
+            http_response_code(response_code: 202);
+            echo json_encode(value: ['type' => 'progress'], flags: JSON_THROW_ON_ERROR);
+            exit();
+        }
+        $resultJson = file_get_contents(filename: $resultPath);
+        $result = $resultJson === false ? null : json_decode(json: $resultJson, associative: true);
+        if (!is_array(value: $result)) {
+            http_response_code(response_code: 500);
+            echo json_encode(value: ['error' => 'Das Ergebnis konnte nicht gelesen werden.'], flags: JSON_THROW_ON_ERROR);
+            exit();
+        }
+        echo json_encode(value: $result, flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         exit();
     }
 
@@ -768,6 +851,11 @@ final class Application
     private function taskCancellationPath(string $taskId): string
     {
         return $this->runtime->root . '/.data/tasks/' . $taskId . '.cancel';
+    }
+
+    private function taskResultPath(string $taskId): string
+    {
+        return $this->runtime->root . '/.data/tasks/' . $taskId . '.json';
     }
 
     private function renderLogin(): never
@@ -843,7 +931,7 @@ final class Application
         $icon = $this->escape(value: $configuration['icon']);
         $isOrder = (string) $task['action'] === 'order';
         $basketLink = $isOrder
-            ? '<a data-task-basket href="https://www.rewe.de/shop/checkout/basket" target="_blank" rel="noopener noreferrer" class="mt-6 hidden w-full items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 py-3 text-base font-semibold text-white hover:bg-emerald-800"><i data-lucide="shopping-cart" class="size-5"></i>Zum Warenkorb<i data-lucide="external-link" class="size-4"></i></a>'
+            ? '<a data-task-basket href="https://www.rewe.de/mydata/login" target="_blank" rel="noopener noreferrer" class="mt-6 hidden w-full items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 py-3 text-base font-semibold text-white hover:bg-emerald-800"><i data-lucide="shopping-cart" class="size-5"></i>Zum Warenkorb<i data-lucide="external-link" class="size-4"></i></a>'
             : '';
         $returnClasses = $isOrder
             ? 'mt-3 border border-stone-300 text-stone-700 hover:bg-stone-50'
@@ -917,17 +1005,37 @@ final class Application
         string $message,
         string $type = 'progress',
         ?string $returnUrl = null,
-        ?string $help = null
+        ?string $help = null,
+        ?string $taskId = null
     ): void {
+        $update = [
+            'type' => $type,
+            'progress' => max(0, min(100, $progress)),
+            'message' => $message,
+            'return_url' => $returnUrl,
+            'help' => $help
+        ];
+        if ($taskId !== null && in_array(needle: $type, haystack: ['success', 'error', 'cancelled'], strict: true)) {
+            $directory = $this->runtime->root . '/.data/tasks';
+            if (is_dir(filename: $directory) || mkdir(directory: $directory, permissions: 0770, recursive: true)) {
+                $resultPath = $this->taskResultPath(taskId: $taskId);
+                $temporaryPath = $resultPath . '.' . bin2hex(string: random_bytes(length: 8));
+                $resultJson = json_encode(
+                    value: $update,
+                    flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+                );
+                if (file_put_contents(filename: $temporaryPath, data: $resultJson, flags: LOCK_EX) !== false) {
+                    chmod(filename: $temporaryPath, permissions: 0600);
+                    rename(from: $temporaryPath, to: $resultPath);
+                }
+                if (is_file(filename: $temporaryPath)) {
+                    unlink(filename: $temporaryPath);
+                }
+            }
+        }
         echo 'data: ' .
             json_encode(
-                value: [
-                    'type' => $type,
-                    'progress' => max(0, min(100, $progress)),
-                    'message' => $message,
-                    'return_url' => $returnUrl,
-                    'help' => $help
-                ],
+                value: $update,
                 flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
             ) .
             "\n:" .
@@ -1171,13 +1279,15 @@ final class Application
                         : null;
                     $productName = trim(string: (string) ($selectedProduct['name'] ?? ''));
                     $productUrl = trim(string: (string) ($selectedProduct['url'] ?? ''));
+                    $productQuantity = max(1, (int) ($selectedProduct['quantity'] ?? 1));
+                    $productLabel = ($productQuantity > 1 ? $productQuantity . ' × ' : '') . $productName;
                     $productHtml = '<span class="text-stone-400">Nicht zugeordnet</span>';
                     if ($productName !== '' && $productUrl !== '') {
                         $productHtml =
                             '<a href="' .
                             $this->escape(value: $productUrl) .
                             '" target="_blank" rel="noopener noreferrer" class="inline-flex items-start gap-1.5 font-medium text-emerald-700 hover:text-emerald-900 hover:underline"><span>' .
-                            $this->escape(value: $productName) .
+                            $this->escape(value: $productLabel) .
                             '</span><i data-lucide="external-link" class="mt-0.5 size-3 shrink-0"></i></a>';
                     }
                     $ingredientRows .=
@@ -1240,9 +1350,9 @@ final class Application
                                 <template data-note-template>{$noteHtml}</template>
                             </div>
                         </div>
-                        <form method="post" class="mt-3 sm:mt-4">
-                            <input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="{$action}"><input type="hidden" name="recipe_id" value="{$id}"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}
-                            <button type="submit" title="{$buttonTitle}" class="flex w-full items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium sm:py-2 {$buttonStyle}"{$buttonDisabled}><i data-lucide="{$buttonIcon}" class="size-4"></i>{$buttonText}</button>
+                        <form method="post" data-week-assignment-form class="mt-3 sm:mt-4">
+                            <input type="hidden" name="csrf" value="{$csrf}"><input data-week-assignment-action type="hidden" name="action" value="{$action}"><input type="hidden" name="recipe_id" value="{$id}"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}
+                            <button data-week-assignment-button type="submit" title="{$buttonTitle}" class="flex w-full items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium sm:py-2 {$buttonStyle}"{$buttonDisabled}><i data-lucide="{$buttonIcon}" class="size-4"></i>{$buttonText}</button>
                         </form>
                     </div>
                 </article>
@@ -1409,7 +1519,7 @@ final class Application
                         <div class="mx-auto grid max-w-screen-2xl gap-3 px-3 py-3 sm:px-5 lg:grid-cols-[1fr_auto] lg:items-end lg:gap-5 lg:py-6">
                             <div class="flex items-center justify-between gap-3 lg:block"><p class="text-xs font-medium leading-5 text-emerald-700 sm:text-sm">KW <span class="tabular-nums">{$week}</span> <span class="tabular-nums">({$selectedWeekDateLabel})</span></p><div class="text-sm text-stone-500 lg:mt-1"><span><strong class="text-stone-900">{$total}</strong> Rezepte</span></div></div>
                             <div class="flex w-full flex-wrap gap-2 lg:w-auto">
-                                <form method="post" action="/task" data-confirm-title="Woche {$week} bestellen?" data-confirm="Der aktuelle REWE-Warenkorb wird vollständig geleert und durch die Zutaten dieser Woche ersetzt." data-confirm-button="Jetzt bestellen!" class="w-full lg:w-auto"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="order"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button title="{$orderTitle}" class="flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium lg:w-auto {$orderStyle}"{$orderDisabled}><i data-lucide="shopping-cart" class="size-4"></i>Produkte dieser Woche bestellen</button></form>
+                                <form data-order-form method="post" action="/task" data-confirm-title="Woche {$week} bestellen?" data-confirm="Der aktuelle REWE-Warenkorb wird vollständig geleert und durch die Zutaten dieser Woche ersetzt." data-confirm-button="Jetzt bestellen!" class="w-full lg:w-auto"><input type="hidden" name="csrf" value="{$csrf}"><input type="hidden" name="action" value="order"><input type="hidden" name="year" value="{$year}"><input type="hidden" name="week" value="{$week}">{$filterFields}<button data-order-button title="{$orderTitle}" class="flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium lg:w-auto {$orderStyle}"{$orderDisabled}><i data-lucide="shopping-cart" class="size-4"></i>Produkte dieser Woche bestellen</button></form>
                             </div>
                         </div>
                     </section>

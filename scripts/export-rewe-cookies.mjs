@@ -60,7 +60,7 @@ let chromeProcess = spawn(
         '--no-first-run',
         '--no-default-browser-check',
         ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []),
-        'https://www.rewe.de/shop/checkout/basket',
+        'https://www.rewe.de/mydata/login',
         'https://account.rewe.de/realms/sso/account/'
     ],
     { stdio: 'ignore' }

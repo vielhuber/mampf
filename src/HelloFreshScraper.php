@@ -304,6 +304,7 @@ final class HelloFreshScraper
     /**
      * Enrich recipes with shipped ingredients and matching REWE products.
      *
+     * @param list<int> $catalogRetryDelays
      * @return array{processed: int, failed: int, errors: list<string>, missing_ingredients: array<string, int>}
      */
     public function scrapeIngredients(
@@ -311,7 +312,9 @@ final class HelloFreshScraper
         ?int $limit = null,
         ?callable $progress = null,
         ?callable $catalogProgress = null,
-        ?callable $checkpoint = null
+        ?callable $checkpoint = null,
+        array $catalogRetryDelays = [],
+        ?callable $catalogRetry = null
     ): array {
         $processed = 0;
         $failed = 0;
@@ -319,7 +322,13 @@ final class HelloFreshScraper
         $missingIngredientCounts = [];
         $recipes = $this->database->recipesForIngredientMapping(limit: $limit, includeComplete: true);
         if ($recipes !== []) {
-            $reweClient->downloadProductCatalog(progress: $catalogProgress, checkpoint: $checkpoint);
+            $reweClient->downloadProductCatalog(
+                progress: $catalogProgress,
+                checkpoint: $checkpoint,
+                refresh: true,
+                retryDelays: $catalogRetryDelays,
+                retryProgress: $catalogRetry
+            );
         }
         foreach ($recipes as $recipe) {
             try {
@@ -342,20 +351,18 @@ final class HelloFreshScraper
                         continue;
                     }
                     $previousIngredient = $ingredient;
-                    $previousListingId = trim(string: (string) ($ingredient['selected']['listing_id'] ?? ''));
                     $products = $reweClient->productsForIngredient(name: $name);
                     if ($products === []) {
                         $missingIngredients[] = $name;
                     }
                     $ingredient['search_url'] = $reweClient->searchUrl(query: $name);
                     $ingredient['products'] = $products;
-                    $ingredient['selected'] = $products[0] ?? null;
-                    foreach ($products as $product) {
-                        if ((string) ($product['listing_id'] ?? '') === $previousListingId) {
-                            $ingredient['selected'] = $product;
-                            break;
-                        }
-                    }
+                    $ingredient['selected'] = $reweClient->selectProductForIngredient(
+                        name: $name,
+                        amount: $ingredient['amount'] ?? null,
+                        unit: (string) ($ingredient['unit'] ?? ''),
+                        products: $products
+                    );
                     if ($ingredient === $previousIngredient) {
                         continue;
                     }

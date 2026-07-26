@@ -177,7 +177,7 @@ final class DatabaseTest extends TestCase
         $italian = $database->recipes('', 1, 10, 2026, 29, category: 'Italienisch');
         $mappingRecipes = $database->recipesForIngredientMapping();
 
-        $this->assertSame('Beta', $mapped[0]['name']);
+        $this->assertSame(['Alpha', 'Beta'], array_column(array: $mapped, column_key: 'name'));
         $this->assertSame('Alpha', $unmapped[0]['name']);
         $this->assertSame('Alpha', $selected[0]['name']);
         $this->assertSame('Alpha', $sorted[0]['name']);
@@ -188,10 +188,10 @@ final class DatabaseTest extends TestCase
         $this->assertCount(2, $database->recipesForIngredientMapping(includeComplete: true));
         $this->assertSame(3, $database->mappedIngredientCount('', 2026, 29));
         $this->assertSame(1, $database->mappedIngredientCount('Alpha', 2026, 29));
-        $this->assertSame(2, $database->mappedIngredientCount('', 2026, 29, ingredientFilter: 'mapped'));
+        $this->assertSame(3, $database->mappedIngredientCount('', 2026, 29, ingredientFilter: 'mapped'));
         $this->assertSame(1, $database->mappedIngredientCount('', 2026, 29, weekFilter: 'selected'));
         $this->assertSame(2, $database->recipeCount('', 2026, 29));
-        $this->assertSame(1, $database->recipeCount('', 2026, 29, ingredientFilter: 'mapped'));
+        $this->assertSame(2, $database->recipeCount('', 2026, 29, ingredientFilter: 'mapped'));
         $this->assertSame(1, $database->recipeCount('', 2026, 29, weekFilter: 'selected'));
         $this->assertSame(1, $database->recipeCount('', 2026, 29, category: 'Vegetarisch'));
         $this->assertSame(['Italienisch', 'Vegetarisch'], $database->categories());

@@ -103,7 +103,21 @@ final class ReweClientTest extends TestCase
                         'title' => 'REWE Regional Hackfleisch gemischt 500g',
                         'detailsUrl' => '/p/hackfleisch/2',
                         'imageURL' => 'two.jpg',
-                        'pricing' => ['currentRetailPrice' => 698, 'discount' => ['validTo' => '2026-07-24']]
+                        'baseQuantity' => 500,
+                        'quantityType' => 'G',
+                        'pricing' => [
+                            'currentRetailPrice' => 698,
+                            'discount' => ['validTo' => '2026-07-24'],
+                            'grammage' => '500g (1 kg = 13,96 €)'
+                        ]
+                    ],
+                    [
+                        'productId' => 'product-3',
+                        'listingId' => 'listing-3',
+                        'title' => 'Hackfleisch nicht verfügbar',
+                        'detailsUrl' => '/p/hackfleisch/3',
+                        'orderLimit' => 0,
+                        'pricing' => ['currentRetailPrice' => 498]
                     ]
                 ]
             ],
@@ -116,7 +130,11 @@ final class ReweClientTest extends TestCase
         $this->assertSame('https://www.rewe.de/shop/p/hackfleisch/2', $products[0]['url']);
         $this->assertSame(6.98, $products[0]['price']);
         $this->assertTrue($products[0]['discount']);
+        $this->assertSame(500.0, $products[0]['base_quantity']);
+        $this->assertSame('G', $products[0]['quantity_type']);
+        $this->assertSame('500g (1 kg = 13,96 €)', $products[0]['grammage']);
         $this->assertFalse($products[1]['discount']);
+        $this->assertCount(2, $products);
     }
 
     public function testProductSearchResponseCanReturnCompleteCatalogPage(): void
@@ -237,7 +255,7 @@ final class ReweClientTest extends TestCase
             filename: $catalogFile,
             data: json_encode(
                 value: [
-                    'version' => 1,
+                    'version' => 3,
                     'products' => [
                         [
                             'product_id' => 'potato-product',
@@ -314,6 +332,23 @@ final class ReweClientTest extends TestCase
         $this->assertTrue($basket['logged_in']);
     }
 
+    public function testUnavailableBasketItemsAreIncludedForRemoval(): void
+    {
+        $basket = $this->client()->parseBasket(
+            html: <<<'HTML'
+                <script type="module">
+                    const data = {"id":"basket-3","lineItems":[{"quantity":1,"product":{"listing":{"listingId":"listing-available"}}},{"quantity":0,"product":{"listing":{"listingId":"listing-unavailable"}},"changes":[{"id":"changes.type.availability.in.region"}]}]};
+                </script>
+                <script type="application/json">{&quot;isLoggedIn&quot;:true}</script>
+            HTML
+        );
+
+        $this->assertSame('basket-3', $basket['id']);
+        $this->assertSame(['listing-available', 'listing-unavailable'], $basket['listing_ids']);
+        $this->assertSame(['listing-available' => 1], $basket['listing_quantities']);
+        $this->assertTrue($basket['logged_in']);
+    }
+
     public function testEmptyLoggedOutBasketStateIsParsed(): void
     {
         $basket = $this->client()->parseBasket(
@@ -384,6 +419,146 @@ final class ReweClientTest extends TestCase
         $this->assertContains('Paprika geräuchert', $method->invoke($client, 'Paprikapulver, geräuchert'));
         $this->assertContains('Hot Dog Rolls', $method->invoke($client, 'Hot-Dog-Brötchen'));
         $this->assertContains('Kabeljaufilet', $method->invoke($client, 'Kabeljaufilet ohne Haut'));
+        $this->assertContains('Soba Noodles', $method->invoke($client, 'Sobanudeln'));
+        $this->assertContains('Reis Noodles', $method->invoke($client, 'Reisnudeln'));
+    }
+
+    public function testSobaNoodlesPreferUnseasonedNoodlesFromCatalog(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $client = new ReweClient(
+            database: new Database(path: $path),
+            httpClient: new HttpClient(),
+            cookieFile: '/does/not/exist'
+        );
+        $method = new \ReflectionClass(objectOrClass: $client)->getMethod(name: 'hydrateProductCatalog');
+        $method->invoke(
+            $client,
+            [
+                [
+                    'product_id' => 'instant-soba',
+                    'listing_id' => 'instant-soba-listing',
+                    'name' => 'Nissin Soba Nudeln mit Yakisoba-Sauce Classic 90g',
+                    'url' => 'https://www.rewe.de/shop/p/instant-soba/1',
+                    'discount' => false
+                ],
+                [
+                    'product_id' => 'soba-noodles',
+                    'listing_id' => 'soba-noodles-listing',
+                    'name' => 'Ayuko Soba Noodles nach japanischer Art 300g',
+                    'url' => 'https://www.rewe.de/shop/p/soba-noodles/2',
+                    'discount' => false
+                ]
+            ]
+        );
+
+        $products = $client->productsForIngredient(name: 'Sobanudeln');
+
+        $this->assertSame('soba-noodles-listing', $products[0]['listing_id']);
+        unlink(filename: $path);
+    }
+
+    public function testCreamMappingRejectsDifferentProductsAndCoversTheRecipeAmount(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $client = new ReweClient(
+            database: new Database(path: $path),
+            httpClient: new HttpClient(),
+            cookieFile: '/does/not/exist'
+        );
+        new \ReflectionClass(objectOrClass: $client)
+            ->getMethod(name: 'hydrateProductCatalog')
+            ->invoke(
+                $client,
+                [
+                    [
+                        'listing_id' => 'sour-cream',
+                        'name' => 'REWE Bio Saure Sahne 200g',
+                        'url' => 'https://www.rewe.de/shop/p/saure-sahne/1',
+                        'base_quantity' => 200,
+                        'quantity_type' => 'G',
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'cream-pudding',
+                        'name' => 'Ruf Sahne-Pudding 3 Stück',
+                        'url' => 'https://www.rewe.de/shop/p/sahne-pudding/2',
+                        'base_quantity' => 3,
+                        'quantity_type' => 'STK',
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'cooking-cream',
+                        'name' => 'REWE Beste Wahl H-Sahne zum Kochen 15% 200g',
+                        'url' => 'https://www.rewe.de/shop/p/koch-sahne/3',
+                        'base_quantity' => 200,
+                        'quantity_type' => 'G',
+                        'discount' => false
+                    ]
+                ]
+            );
+
+        $products = $client->productsForIngredient(name: 'Sahne');
+        $selected = $client->selectProductForIngredient(name: 'Sahne', amount: 400, unit: 'ml', products: $products);
+
+        $this->assertCount(1, $products);
+        $this->assertSame('cooking-cream', $selected['listing_id']);
+        $this->assertSame(2, $selected['quantity']);
+        unlink(filename: $path);
+    }
+
+    public function testPieceIngredientPrefersTheSmallMatchingProductOverAFlavouredProduct(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $client = new ReweClient(
+            database: new Database(path: $path),
+            httpClient: new HttpClient(),
+            cookieFile: '/does/not/exist'
+        );
+        new \ReflectionClass(objectOrClass: $client)
+            ->getMethod(name: 'hydrateProductCatalog')
+            ->invoke(
+                $client,
+                [
+                    [
+                        'listing_id' => 'onion-bag',
+                        'name' => 'Zwiebeln 1,5kg',
+                        'url' => 'https://www.rewe.de/shop/p/zwiebeln/1',
+                        'base_quantity' => 1500,
+                        'quantity_type' => 'G',
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'red-onion',
+                        'name' => 'Zwiebel rot ca. 100g',
+                        'url' => 'https://www.rewe.de/shop/p/zwiebel-rot/2',
+                        'base_quantity' => 100,
+                        'quantity_type' => 'G',
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'onion-cream-cheese',
+                        'name' => 'REWE Beste Wahl Frischkäse Rote Zwiebel-Porre 100g',
+                        'url' => 'https://www.rewe.de/shop/p/frischkaese/3',
+                        'base_quantity' => 100,
+                        'quantity_type' => 'G',
+                        'discount' => false
+                    ]
+                ]
+            );
+
+        $products = $client->productsForIngredient(name: 'rote Zwiebel');
+        $selected = $client->selectProductForIngredient(
+            name: 'rote Zwiebel',
+            amount: 1,
+            unit: 'Stück',
+            products: $products
+        );
+
+        $this->assertNotContains('onion-cream-cheese', array_column(array: $products, column_key: 'listing_id'));
+        $this->assertSame('red-onion', $selected['listing_id']);
+        $this->assertSame(1, $selected['quantity']);
+        unlink(filename: $path);
     }
 
     public function testCloudflareBasketChallengeHasSpecificError(): void
@@ -411,6 +586,34 @@ final class ReweClientTest extends TestCase
             $method->invoke($client, new HttpResponse(status: 403, body: '<script>window._cf_chl_opt = {};</script>'))
         );
         $this->assertFalse($method->invoke($client, new HttpResponse(status: 403, body: 'Forbidden')));
+    }
+
+    public function testCloudflareAccessIsRetriedWithTheConfiguredBackoff(): void
+    {
+        $client = $this->client();
+        $method = new \ReflectionClass(objectOrClass: $client)->getMethod(name: 'retryReweAccess');
+        $attempts = 0;
+        $retries = [];
+
+        $result = $method->invoke(
+            $client,
+            static function () use (&$attempts): string {
+                $attempts++;
+                if ($attempts < 3) {
+                    throw ReweAccessException::cloudflareChallenge();
+                }
+                return 'success';
+            },
+            [0, 0],
+            static function (int $delaySeconds, int $nextAttempt, int $totalAttempts) use (&$retries): void {
+                $retries[] = [$delaySeconds, $nextAttempt, $totalAttempts];
+            },
+            null
+        );
+
+        $this->assertSame('success', $result);
+        $this->assertSame(3, $attempts);
+        $this->assertSame([[0, 2, 3], [0, 3, 3]], $retries);
     }
 
     private function client(?string $cookieFile = null): ReweClient

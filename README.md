@@ -37,7 +37,7 @@ npm run cookies:rewe
 
 solve the human check, sign in, verify the delivery location and confirm the export in the terminal. the script includes httponly cookies and writes `.config/rewe-shop.json` and `.config/rewe-account.json`. chrome reuses the persistent profile in `.data/rewe-chrome-profile`, so the rewe session and settings remain available for later exports.
 
-ingredient matching downloads the current market-specific rewe catalog in pages of 500 products for all five sorting modes, merges duplicate listings and caches the result for seven days. changing the exported rewe cookies invalidates the cache. every recipe is remapped locally without individual fallback searches.
+ingredient matching downloads the current market-specific rewe catalog in pages of 500 products for all five sorting modes, merges duplicate listings and replaces the cache on every run. unavailable listings are excluded before recipes are remapped locally without individual fallback searches. ordering reuses the latest cache.
 
 ## cron
 

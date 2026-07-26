@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Mampf\Tests;
 
 use Mampf\Application;
+use Mampf\Database;
 use Mampf\Runtime;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -44,6 +45,65 @@ final class ApplicationTest extends TestCase
                 "\n\n",
             $output
         );
+    }
+
+    public function testTerminalProgressIsStoredForRecovery(): void
+    {
+        $root = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8));
+        $runtimeClass = new ReflectionClass(objectOrClass: Runtime::class);
+        $runtime = $runtimeClass->newInstanceWithoutConstructor();
+        $runtimeClass->getProperty(name: 'root')->setValue($runtime, $root);
+        $application = new Application(runtime: $runtime);
+        $method = new ReflectionClass(objectOrClass: $application)->getMethod(name: 'sendProgress');
+        $taskId = str_repeat(string: 'a', times: 32);
+
+        ob_start();
+        try {
+            $method->invoke($application, 100, 'Fehlgeschlagen.', 'error', '/?year=2026', null, $taskId);
+        } finally {
+            ob_end_clean();
+        }
+
+        $this->assertSame(
+            [
+                'type' => 'error',
+                'progress' => 100,
+                'message' => 'Fehlgeschlagen.',
+                'return_url' => '/?year=2026',
+                'help' => null
+            ],
+            json_decode(
+                json: (string) file_get_contents(filename: $root . '/.data/tasks/' . $taskId . '.json'),
+                associative: true
+            )
+        );
+
+        unlink(filename: $root . '/.data/tasks/' . $taskId . '.json');
+        rmdir(directory: $root . '/.data/tasks');
+        rmdir(directory: $root . '/.data');
+        rmdir(directory: $root);
+    }
+
+    public function testWeekAssignmentReturnsUpdatedRecipeCount(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $database = new Database(path: $path);
+        $database->upsertRecipe('recipe', 'Recipe', 'image', 'https://example.org/recipe', null);
+        $recipeId = (int) $database->recipes('', 1, 10, 2026, 29)[0]['id'];
+        $database->updateIngredients(
+            recipeId: $recipeId,
+            ingredients: [['name' => 'Kartoffeln', 'selected' => ['listing_id' => 'product-1']]]
+        );
+        $runtimeClass = new ReflectionClass(objectOrClass: Runtime::class);
+        $runtime = $runtimeClass->newInstanceWithoutConstructor();
+        $runtimeClass->getProperty(name: 'database')->setValue($runtime, $database);
+        $application = new Application(runtime: $runtime);
+        $method = new ReflectionClass(objectOrClass: $application)->getMethod(name: 'updateWeekAssignment');
+
+        $this->assertSame(1, $method->invoke($application, 'assign', $recipeId, 2026, 29));
+        $this->assertSame(0, $method->invoke($application, 'remove', $recipeId, 2026, 29));
+
+        unlink(filename: $path);
     }
 
     public function testCronStatusUsesTheCronLock(): void

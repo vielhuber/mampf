@@ -172,13 +172,37 @@ final class HelloFreshScraperTest extends TestCase
         $recipe = $database->recipes('', 1, 10, 2026, 29)[0];
         $database->updateIngredients(
             recipeId: (int) $recipe['id'],
-            ingredients: [['name' => 'Kartoffeln', 'selected' => ['listing_id' => 'old-listing']]]
+            ingredients: [
+                [
+                    'name' => 'Sahne',
+                    'amount' => 400,
+                    'unit' => 'ml',
+                    'selected' => ['listing_id' => 'old-listing']
+                ]
+            ]
         );
         $reweClient = new ReweClient(database: $database, httpClient: new HttpClient(), cookieFile: '/does/not/exist');
         $reflection = new \ReflectionClass(objectOrClass: $reweClient);
         $reflection->getProperty(name: 'productsByIngredient')->setValue(
             $reweClient,
-            ['kartoffeln' => [['listing_id' => 'new-listing', 'name' => 'Kartoffeln']]]
+            [
+                'sahne' => [
+                    [
+                        'listing_id' => 'new-listing',
+                        'name' => 'Sahne zum Kochen 200g',
+                        'base_quantity' => 200,
+                        'quantity_type' => 'G',
+                        'score' => 100
+                    ],
+                    [
+                        'listing_id' => 'old-listing',
+                        'name' => 'Saure Sahne 200g',
+                        'base_quantity' => 200,
+                        'quantity_type' => 'G',
+                        'score' => 50
+                    ]
+                ]
+            ]
         );
         $reflection->getProperty(name: 'productCatalogLoaded')->setValue($reweClient, true);
 
@@ -191,6 +215,7 @@ final class HelloFreshScraperTest extends TestCase
         $this->assertSame(1, $result['processed']);
         $this->assertSame(0, $result['failed']);
         $this->assertSame('new-listing', $ingredients[0]['selected']['listing_id']);
+        $this->assertSame(2, $ingredients[0]['selected']['quantity']);
         unlink(filename: $path);
     }
 }

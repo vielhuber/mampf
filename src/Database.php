@@ -297,8 +297,9 @@ final class Database
     ): array {
         $offset = max(0, $page - 1) * $perPage;
         $ingredientCondition = match ($ingredientFilter) {
-            'mapped' => '(recipes.ingredient_count > 0
-                AND recipes.mapped_ingredient_count = recipes.ingredient_count)',
+            'mapped' => '((recipes.ingredient_count > 0
+                AND recipes.mapped_ingredient_count = recipes.ingredient_count)
+                OR week_recipes.recipe_id IS NOT NULL)',
             'unmapped' => '(recipes.ingredient_count = 0
                 OR recipes.mapped_ingredient_count < recipes.ingredient_count)',
             default => '1 = 1'
@@ -396,8 +397,9 @@ final class Database
         string $category = ''
     ): int {
         $ingredientCondition = match ($ingredientFilter) {
-            'mapped' => '(recipes.ingredient_count > 0
-                AND recipes.mapped_ingredient_count = recipes.ingredient_count)',
+            'mapped' => '((recipes.ingredient_count > 0
+                AND recipes.mapped_ingredient_count = recipes.ingredient_count)
+                OR week_recipes.recipe_id IS NOT NULL)',
             'unmapped' => '(recipes.ingredient_count = 0
                 OR recipes.mapped_ingredient_count < recipes.ingredient_count)',
             default => '1 = 1'
@@ -444,8 +446,9 @@ final class Database
         string $category = ''
     ): int {
         $ingredientCondition = match ($ingredientFilter) {
-            'mapped' => '(recipes.ingredient_count > 0
-                AND recipes.mapped_ingredient_count = recipes.ingredient_count)',
+            'mapped' => '((recipes.ingredient_count > 0
+                AND recipes.mapped_ingredient_count = recipes.ingredient_count)
+                OR week_recipes.recipe_id IS NOT NULL)',
             'unmapped' => '(recipes.ingredient_count = 0
                 OR recipes.mapped_ingredient_count < recipes.ingredient_count)',
             default => '1 = 1'
