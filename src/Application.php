@@ -68,10 +68,18 @@ final class Application
         $category = trim(string: (string) ($_GET['category'] ?? ''));
         $sortValue = (string) ($_GET['sort'] ?? 'favorites_desc');
         $sort = match ($sortValue) {
-            'favorites_desc', 'ratings_desc', 'rating_desc', 'name_asc', 'name_desc', 'created_desc' => $sortValue,
+            'favorites_desc', 'ratings_desc', 'rating_desc', 'name_asc', 'name_desc', 'created_desc', 'random' =>
+                $sortValue,
             default => 'favorites_desc'
         };
         $partial = (string) ($_GET['partial'] ?? '') === '1';
+        $randomSeed = 0;
+        if ($sort === 'random') {
+            $requestedRandomSeed = (int) ($_GET['random_seed'] ?? 0);
+            $randomSeed = $partial && $requestedRandomSeed >= 1 && $requestedRandomSeed <= 2147483646
+                ? $requestedRandomSeed
+                : random_int(min: 1, max: 2147483646);
+        }
         $page = $partial ? max(1, (int) ($_GET['page'] ?? 1)) : 1;
         $perPage = 24;
         $recipes = $this->runtime->database->recipes(
@@ -84,7 +92,8 @@ final class Application
             weekFilter: $weekFilter,
             category: $category,
             sort: $sort,
-            userId: $this->currentUser()->id
+            userId: $this->currentUser()->id,
+            randomSeed: $randomSeed
         );
         $count = $this->runtime->database->recipeCount(
             search: $search,
@@ -105,6 +114,7 @@ final class Application
             weekFilter: $weekFilter,
             category: $category,
             sort: $sort,
+            randomSeed: $randomSeed,
             page: $page,
             pages: max(1, (int) ceil(num: $count / $perPage)),
             partial: $partial
@@ -1060,6 +1070,7 @@ final class Application
         string $weekFilter,
         string $category,
         string $sort,
+        int $randomSeed,
         int $page,
         int $pages,
         bool $partial
@@ -1164,6 +1175,8 @@ final class Application
             '">' .
             $this->escape(value: $cronText) .
             '</button></div>';
+        $randomSeedField =
+            $sort === 'random' ? '<input type="hidden" name="random_seed" value="' . $randomSeed . '">' : '';
         $searchValue = $this->escape(value: $search);
         $filterFields =
             '<input type="hidden" name="search" value="' .
@@ -1176,7 +1189,8 @@ final class Application
             $this->escape(value: $category) .
             '"><input type="hidden" name="sort" value="' .
             $this->escape(value: $sort) .
-            '">';
+            '">' .
+            $randomSeedField;
         $flash = $_SESSION['flash'] ?? null;
         unset($_SESSION['flash']);
         $flashHtml = '';
@@ -1374,11 +1388,14 @@ final class Application
             );
             exit();
         }
+        $randomSeedAttribute = $sort === 'random' ? ' data-random-seed="' . $randomSeed . '"' : '';
         $lazyLoaderHtml =
             $page < $pages
                 ? '<div data-lazy-loader data-next-page="' .
                     ($page + 1) .
-                    '" class="flex h-16 items-center justify-center text-stone-400" aria-label="Weitere Rezepte laden"><i data-lucide="loader-circle" class="size-5 animate-spin"></i></div>'
+                    '"' .
+                    $randomSeedAttribute .
+                    ' class="flex h-16 items-center justify-center text-stone-400" aria-label="Weitere Rezepte laden"><i data-lucide="loader-circle" class="size-5 animate-spin"></i></div>'
                 : '';
         $ingredientOptions =
             $this->option(value: 'mapped', label: 'Zutaten zugeordnet', selected: $ingredientFilter) .
@@ -1448,7 +1465,8 @@ final class Application
             $this->option(value: 'rating_desc', label: 'Beste Bewertung', selected: $sort) .
             $this->option(value: 'name_asc', label: 'Name A–Z', selected: $sort) .
             $this->option(value: 'name_desc', label: 'Name Z–A', selected: $sort) .
-            $this->option(value: 'created_desc', label: 'Zuletzt importiert', selected: $sort);
+            $this->option(value: 'created_desc', label: 'Zuletzt importiert', selected: $sort) .
+            $this->option(value: 'random', label: 'Zufällig', selected: $sort);
         $categoryOptions = $this->option(value: '', label: 'Alle Kategorien', selected: $category);
         foreach ($this->runtime->database->categories() as $categoryName) {
             $categoryOptions .= $this->option(value: $categoryName, label: $categoryName, selected: $category);
@@ -1473,7 +1491,7 @@ final class Application
             <select name="week_filter" aria-label="Wochenstatus" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$weekOptions}</select>
             <select name="sort" aria-label="Sortierung" class="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm">{$sortOptions}</select>
             <div class="flex gap-2 sm:col-span-2 lg:col-span-1">
-                <a href="/?year={$year}&amp;week={$week}" title="Filter zurücksetzen" aria-label="Filter zurücksetzen" class="grid size-9 shrink-0 place-items-center rounded-md border border-stone-300 bg-white text-stone-600 hover:bg-stone-50"><i data-lucide="filter-x" class="size-4"></i></a>
+                <a data-filter-reset href="/?year={$year}&amp;week={$week}" title="Filter zurücksetzen" aria-label="Filter zurücksetzen" class="grid size-9 shrink-0 place-items-center rounded-md border border-stone-300 bg-white text-stone-600 hover:bg-stone-50"><i data-lucide="filter-x" class="size-4"></i></a>
                 <button class="flex-1 rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-50">Filter</button>
             </div>
         HTML;
@@ -1485,6 +1503,29 @@ final class Application
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>mampf // KW {$week}</title>
                 <script>document.documentElement.classList.toggle('dark', localStorage.getItem('mampf-theme') === 'dark');</script>
+                <script>
+                    try {
+                        let names = ['search', 'category', 'ingredients', 'week_filter', 'sort'];
+                        let url = new URL(window.location.href);
+                        if (!names.some(name => url.searchParams.has(name))) {
+                            let filters = JSON.parse(localStorage.getItem('mampf-filters') || 'null');
+                            let restored = false;
+                            if (filters !== null && typeof filters === 'object') {
+                                names.forEach(name => {
+                                    if (typeof filters[name] === 'string') {
+                                        url.searchParams.set(name, filters[name]);
+                                        restored = true;
+                                    }
+                                });
+                            }
+                            if (restored) {
+                                window.location.replace(url);
+                            }
+                        }
+                    } catch {
+                        localStorage.removeItem('mampf-filters');
+                    }
+                </script>
                 <link rel="manifest" href="/manifest.webmanifest">
                 <meta name="theme-color" content="#047857">
                 <meta name="mobile-web-app-capable" content="yes">
@@ -1525,8 +1566,8 @@ final class Application
                     </section>
                     <section class="border-b border-stone-200 bg-stone-100/70">
                         <div class="mx-auto max-w-screen-2xl px-3 py-3 sm:px-5 lg:py-4">
-                            <details class="group lg:hidden"><summary class="flex cursor-pointer list-none items-center justify-between rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium"><span class="flex items-center gap-2"><i data-lucide="sliders-horizontal" class="size-4"></i>Filter und Sortierung</span><i data-lucide="chevron-down" class="size-4 transition-transform group-open:rotate-180"></i></summary><form method="get" class="mt-3 grid gap-2">{$filterControls}</form></details>
-                            <form method="get" class="hidden gap-2 lg:grid lg:grid-cols-[minmax(15rem,1fr)_auto_auto_auto_auto_auto]">{$filterControls}</form>
+                            <details class="group lg:hidden"><summary class="flex cursor-pointer list-none items-center justify-between rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium"><span class="flex items-center gap-2"><i data-lucide="sliders-horizontal" class="size-4"></i>Filter und Sortierung</span><i data-lucide="chevron-down" class="size-4 transition-transform group-open:rotate-180"></i></summary><form data-filter-form method="get" class="mt-3 grid gap-2">{$filterControls}</form></details>
+                            <form data-filter-form method="get" class="hidden gap-2 lg:grid lg:grid-cols-[minmax(15rem,1fr)_auto_auto_auto_auto_auto]">{$filterControls}</form>
                         </div>
                     </section>
                     <section class="mx-auto max-w-screen-2xl px-3 py-4 sm:px-5 lg:py-6">

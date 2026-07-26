@@ -105,6 +105,10 @@ final class ReweClientTest extends TestCase
                         'imageURL' => 'two.jpg',
                         'baseQuantity' => 500,
                         'quantityType' => 'G',
+                        'categoryDetails' => [
+                            ['path' => 'Fleisch & Fisch/Fleisch/Hackfleisch'],
+                            ['path' => 'Fleisch & Fisch/Fleisch/Hackfleisch/Gemischtes Hackfleisch']
+                        ],
                         'pricing' => [
                             'currentRetailPrice' => 698,
                             'discount' => ['validTo' => '2026-07-24'],
@@ -133,6 +137,10 @@ final class ReweClientTest extends TestCase
         $this->assertSame(500.0, $products[0]['base_quantity']);
         $this->assertSame('G', $products[0]['quantity_type']);
         $this->assertSame('500g (1 kg = 13,96 €)', $products[0]['grammage']);
+        $this->assertSame(
+            ['Fleisch & Fisch/Fleisch/Hackfleisch', 'Fleisch & Fisch/Fleisch/Hackfleisch/Gemischtes Hackfleisch'],
+            $products[0]['category_paths']
+        );
         $this->assertFalse($products[1]['discount']);
         $this->assertCount(2, $products);
     }
@@ -255,7 +263,7 @@ final class ReweClientTest extends TestCase
             filename: $catalogFile,
             data: json_encode(
                 value: [
-                    'version' => 3,
+                    'version' => 4,
                     'products' => [
                         [
                             'product_id' => 'potato-product',
@@ -558,6 +566,206 @@ final class ReweClientTest extends TestCase
         $this->assertNotContains('onion-cream-cheese', array_column(array: $products, column_key: 'listing_id'));
         $this->assertSame('red-onion', $selected['listing_id']);
         $this->assertSame(1, $selected['quantity']);
+        unlink(filename: $path);
+    }
+
+    public function testProductSelectionRejectsWrongCategoriesProcessedProductsAndForms(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $client = new ReweClient(
+            database: new Database(path: $path),
+            httpClient: new HttpClient(),
+            cookieFile: '/does/not/exist'
+        );
+        new \ReflectionClass(objectOrClass: $client)
+            ->getMethod(name: 'hydrateProductCatalog')
+            ->invoke(
+                $client,
+                [
+                    [
+                        'listing_id' => 'paprika-pastry',
+                        'name' => 'Paprika Stange',
+                        'url' => 'https://www.rewe.de/shop/p/paprika-stange/1',
+                        'base_quantity' => 1,
+                        'quantity_type' => 'ST',
+                        'category_paths' => ['Brot, Cerealien & Aufstriche/Backwaren/Herzhafte Backwaren'],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'red-pepper',
+                        'name' => 'Paprika rot ca. 250g',
+                        'url' => 'https://www.rewe.de/shop/p/paprika-rot/2',
+                        'base_quantity' => 250,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Obst & Gemüse/Frisches Gemüse/Paprika'],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'honey-candy',
+                        'name' => 'Wick Honig 72g',
+                        'url' => 'https://www.rewe.de/shop/p/wick-honig/3',
+                        'base_quantity' => 72,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Süßes & Salziges/Süßwaren/Bonbons & Kaugummi'],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'honey',
+                        'name' => 'REWE Bio Blütenhonig 350g',
+                        'url' => 'https://www.rewe.de/shop/p/bluetenhonig/4',
+                        'base_quantity' => 350,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Brot, Cerealien & Aufstriche/Süße Brotaufstriche/Honig'],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'broccoli-nuggets',
+                        'name' => 'New leaf Brokkoli-Käse Nuggets 300g',
+                        'url' => 'https://www.rewe.de/shop/p/brokkoli-nuggets/5',
+                        'base_quantity' => 300,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Bewusste Ernährung/100% Pflanzlich/Pflanzliche Fertiggerichte'],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'broccoli',
+                        'name' => 'Broccoli 500g',
+                        'url' => 'https://www.rewe.de/shop/p/broccoli/6',
+                        'base_quantity' => 500,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Obst & Gemüse/Frisches Gemüse/Kohl & Brokkoli'],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'hard-cheese-piece',
+                        'name' => 'Tetê-de-Moine Hartkäse am Stück',
+                        'url' => 'https://www.rewe.de/shop/p/hartkaese/7',
+                        'base_quantity' => 400,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Käse, Eier & Molkerei/Käse & Käseersatz/Hartkäse'],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'grated-hard-cheese',
+                        'name' => 'Marca Italia Hartkäse gerieben und getrocknet 80g',
+                        'url' => 'https://www.rewe.de/shop/p/hartkaese-gerieben/8',
+                        'base_quantity' => 80,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Käse, Eier & Molkerei/Käse & Käseersatz/Hartkäse'],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'mozzarella-pastry',
+                        'name' => 'Käse Mozzarella-Fächer',
+                        'url' => 'https://www.rewe.de/shop/p/mozzarella-faecher/9',
+                        'base_quantity' => 1,
+                        'quantity_type' => 'ST',
+                        'category_paths' => [
+                            'Brot, Cerealien & Aufstriche/Backwaren/Süße Backwaren/Kuchen & Mini-Kuchen'
+                        ],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'buffalo-mozzarella',
+                        'name' => 'Marca Italia Mozzarella di Bufala 125g',
+                        'url' => 'https://www.rewe.de/shop/p/mozzarella-di-bufala/10',
+                        'base_quantity' => 125,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Käse, Eier & Molkerei/Käse & Käseersatz/Mozzarella'],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'lemongrass-tea',
+                        'name' => 'Fuze Tea Schwarzer Tee Zitrone Zitronengras 1,25l',
+                        'url' => 'https://www.rewe.de/shop/p/fuze-tea-zitronengras/11',
+                        'base_quantity' => 1.25,
+                        'quantity_type' => 'L',
+                        'category_paths' => ['Getränke & Genussmittel/Erfrischungsgetränke/Eistee'],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'tomato-crackers',
+                        'name' => 'Tuc Bake Rolls Tomate & Olive 150g',
+                        'url' => 'https://www.rewe.de/shop/p/bake-rolls-tomate/12',
+                        'base_quantity' => 150,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Süßes & Salziges/Chips & Knabbereien/Cracker'],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'tomato-baguette',
+                        'name' => 'ja! Baguette Tomate Mozzarella 6x125g',
+                        'url' => 'https://www.rewe.de/shop/p/baguette-tomate/13',
+                        'base_quantity' => 125,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Tiefkühlkost/Pizza & Baguettes/Pizzabaguettes & Ofenbrote'],
+                        'discount' => false
+                    ],
+                    [
+                        'listing_id' => 'tomato',
+                        'name' => 'Tomate San Marzano 1 Stück ca. 100g',
+                        'url' => 'https://www.rewe.de/shop/p/tomate/14',
+                        'base_quantity' => 1,
+                        'quantity_type' => 'ST',
+                        'category_paths' => ['Obst & Gemüse/Frisches Gemüse/Tomaten'],
+                        'discount' => false
+                    ]
+                ]
+            );
+
+        $paprika = $client->selectProductForIngredient(
+            name: 'rote Paprika',
+            amount: 1,
+            unit: 'Stück',
+            products: $client->productsForIngredient(name: 'rote Paprika')
+        );
+        $honey = $client->selectProductForIngredient(
+            name: 'Honig',
+            amount: 28,
+            unit: 'g',
+            products: $client->productsForIngredient(name: 'Honig')
+        );
+        $broccoli = $client->selectProductForIngredient(
+            name: 'Brokkoli',
+            amount: 0.75,
+            unit: 'Stück',
+            products: $client->productsForIngredient(name: 'Brokkoli')
+        );
+        $hardCheese = $client->selectProductForIngredient(
+            name: 'geriebener Hartkäse',
+            amount: 20,
+            unit: 'g',
+            products: $client->productsForIngredient(name: 'geriebener Hartkäse')
+        );
+        $buffaloMozzarellaProducts = $client->productsForIngredient(name: 'Büffelmozzarella');
+        $buffaloMozzarella = $client->selectProductForIngredient(
+            name: 'Büffelmozzarella',
+            amount: 2,
+            unit: 'Stück',
+            products: $buffaloMozzarellaProducts
+        );
+        $lemongrassProducts = $client->productsForIngredient(name: 'Zitronengras');
+        $tomatoProducts = $client->productsForIngredient(name: 'Tomate');
+        $tomato = $client->selectProductForIngredient(
+            name: 'Tomate',
+            amount: 3,
+            unit: 'Stück',
+            products: $tomatoProducts
+        );
+
+        $this->assertSame('red-pepper', $paprika['listing_id']);
+        $this->assertSame('honey', $honey['listing_id']);
+        $this->assertSame('broccoli', $broccoli['listing_id']);
+        $this->assertSame('grated-hard-cheese', $hardCheese['listing_id']);
+        $this->assertNotContains(
+            'mozzarella-pastry',
+            array_column(array: $buffaloMozzarellaProducts, column_key: 'listing_id')
+        );
+        $this->assertSame('buffalo-mozzarella', $buffaloMozzarella['listing_id']);
+        $this->assertSame([], $lemongrassProducts);
+        $this->assertNotContains('tomato-crackers', array_column(array: $tomatoProducts, column_key: 'listing_id'));
+        $this->assertNotContains('tomato-baguette', array_column(array: $tomatoProducts, column_key: 'listing_id'));
+        $this->assertSame('tomato', $tomato['listing_id']);
         unlink(filename: $path);
     }
 

@@ -101,6 +101,40 @@ final class DatabaseTest extends TestCase
         unlink(filename: $path);
     }
 
+    public function testRecipesCanBeSortedRandomlyWithAStableSeed(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $database = new Database(path: $path);
+        for ($index = 1; $index <= 12; $index++) {
+            $database->upsertRecipe(
+                sourceId: 'recipe-' . $index,
+                name: 'Recipe ' . $index,
+                imageUrl: 'image',
+                sourceUrl: 'https://example.org/' . $index,
+                sourceUpdatedAt: null,
+                pdfUrl: null
+            );
+        }
+
+        $firstOrder = array_column(
+            array: $database->recipes('', 1, 20, 2026, 29, sort: 'random', randomSeed: 42),
+            column_key: 'source_id'
+        );
+        $sameOrder = array_column(
+            array: $database->recipes('', 1, 20, 2026, 29, sort: 'random', randomSeed: 42),
+            column_key: 'source_id'
+        );
+        $differentOrder = array_column(
+            array: $database->recipes('', 1, 20, 2026, 29, sort: 'random', randomSeed: 43),
+            column_key: 'source_id'
+        );
+
+        $this->assertSame($firstOrder, $sameOrder);
+        $this->assertNotSame($firstOrder, $differentOrder);
+        $this->assertEqualsCanonicalizing($firstOrder, $differentOrder);
+        unlink(filename: $path);
+    }
+
     public function testRecipesWithoutIngredientsAreExcludedFromMapping(): void
     {
         $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';

@@ -352,9 +352,6 @@ final class HelloFreshScraper
                     }
                     $previousIngredient = $ingredient;
                     $products = $reweClient->productsForIngredient(name: $name);
-                    if ($products === []) {
-                        $missingIngredients[] = $name;
-                    }
                     $ingredient['search_url'] = $reweClient->searchUrl(query: $name);
                     $ingredient['products'] = $products;
                     $ingredient['selected'] = $reweClient->selectProductForIngredient(
@@ -363,6 +360,9 @@ final class HelloFreshScraper
                         unit: (string) ($ingredient['unit'] ?? ''),
                         products: $products
                     );
+                    if (trim(string: (string) ($ingredient['selected']['listing_id'] ?? '')) === '') {
+                        $missingIngredients[] = $name;
+                    }
                     if ($ingredient === $previousIngredient) {
                         continue;
                     }

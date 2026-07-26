@@ -25,6 +25,35 @@ if ($themeToggle !== null) {
     });
 }
 
+let FILTER_STORAGE_KEY = 'mampf-filters';
+let FILTER_NAMES = ['search', 'category', 'ingredients', 'week_filter', 'sort'];
+let $filterForms = document.querySelectorAll('[data-filter-form]');
+if ($filterForms.length > 0) {
+    let saveFilters = $form => {
+        let formData = new FormData($form);
+        let filters = {};
+        FILTER_NAMES.forEach(name => {
+            let value = formData.get(name);
+            if (typeof value === 'string') {
+                filters[name] = value;
+            }
+        });
+        try {
+            localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(filters));
+        } catch {
+        }
+    };
+    let url = new URL(window.location.href);
+    let hasFilterParameters = FILTER_NAMES.some(name => url.searchParams.has(name));
+    if (hasFilterParameters) {
+        saveFilters($filterForms[0]);
+    }
+    $filterForms.forEach($form => $form.addEventListener('submit', () => saveFilters($form)));
+    document.querySelectorAll('[data-filter-reset]').forEach($link => {
+        $link.addEventListener('click', () => localStorage.removeItem(FILTER_STORAGE_KEY));
+    });
+}
+
 createIcons({ icons });
 
 let showError = message =>
@@ -679,6 +708,9 @@ if ($recipeGrid !== null && $lazyLoader !== null) {
                 let url = new URL(window.location.href);
                 url.searchParams.set('partial', '1');
                 url.searchParams.set('page', $lazyLoader.dataset.nextPage);
+                if ($lazyLoader.dataset.randomSeed !== undefined) {
+                    url.searchParams.set('random_seed', $lazyLoader.dataset.randomSeed);
+                }
                 let response = await fetch(url);
                 if (!response.ok) {
                     throw new Error('Weitere Rezepte konnten nicht geladen werden.');

@@ -10,7 +10,7 @@ use RuntimeException;
 
 final class ReweClient
 {
-    public const PRODUCT_SEARCH_VERSION = 10;
+    public const PRODUCT_SEARCH_VERSION = 11;
 
     private const BASE_URL = 'https://www.rewe.de';
     private const SEARCH_URL = self::BASE_URL . '/shop/productList';
@@ -21,7 +21,7 @@ final class ReweClient
     private const EMPTY_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7;
     private const CATALOG_PAGE_SIZE = 500;
     private const CATALOG_MAX_PAGES = 100;
-    private const CATALOG_CACHE_VERSION = 3;
+    private const CATALOG_CACHE_VERSION = 4;
     private const CATALOG_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7;
     private const CATALOG_SORTINGS = [
         'RELEVANCE_DESC' => 'Relevanz',
@@ -38,11 +38,12 @@ final class ReweClient
         'basilikumpaste' => 'Basilikum',
         'bergjausenkase' => 'Bergkäse',
         'bimi brokkoli' => 'Bimi Broccoli',
-        'buffelmozzarella' => 'Mozzarella',
+        'buffelmozzarella' => 'Mozzarella di Bufala',
         'buntbarsch tilapia filet' => 'Pangasiusfilet',
         'burgerbrotchen' => 'Hamburger Brötchen',
         'beyond meat vegan burger patty' => 'Beyond Meat Beyond Burger Chicken-Style',
         'blattsalatmischung' => 'Salatmischung',
+        'brokkoli' => 'Broccoli',
         'bulgogisosse' => 'Teriyaki Sauce',
         'butterbohnen' => 'Weiße Riesenbohnen',
         'buttermilch zitronen dressing' => 'Joghurt Dressing',
@@ -187,6 +188,7 @@ final class ReweClient
         'wurzige dalsosse' => 'Curry Sauce Indische Art',
         'kraftige rotweinpaste' => 'Rinder Fond',
         'hot dog brotchen' => 'Hot Dog Rolls',
+        'honig' => 'Blütenhonig',
         'pfirsich ajvar dressing' => 'Ajvar',
         'blumenkohlroschen und gehobelte karotten' => 'Wok Mix',
         'brokkoliroschen und gehobelte karotten' => 'Wok Mix',
@@ -220,21 +222,115 @@ final class ReweClient
     ];
     private const PRODUCT_CARRIER_TERMS = [
         'aufstrich',
+        'baguette',
         'bonbon',
         'chips',
+        'cornichon',
+        'dip',
         'dressing',
+        'emoji',
         'frischkase',
         'heringsfilet',
         'joghurt',
         'keks',
         'kuchen',
         'meerrettich',
+        'nugget',
+        'pasta',
+        'pizza',
         'pudding',
         'saure',
         'sosse',
+        'schlemmerfilet',
         'suppe',
+        'tagliatelle',
+        'tomaten',
         'torte',
-        'wurst'
+        'wurst',
+        'zopf'
+    ];
+    private const PRODUCT_QUERY_CATEGORY_REQUIREMENTS = [
+        'buffelmozzarella' => ['kase eier molkerei'],
+        'mozzarella' => ['kase eier molkerei'],
+        'mozzarella di bufala' => ['kase eier molkerei'],
+        'tomate' => ['obst gemuse'],
+        'zitronengras' => ['obst gemuse', 'ole sosse gewurze']
+    ];
+    private const PRODUCT_CATEGORY_QUERY_CUES = [
+        'bonbons kaugummi' => ['bonbon', 'kaugummi', 'lutsch', 'husten'],
+        'chips knabbereien' => [
+            'bake roll',
+            'cashew',
+            'chip',
+            'cracker',
+            'erdnuss',
+            'knabber',
+            'mandel',
+            'nacho',
+            'nuss',
+            'pistazie',
+            'popcorn',
+            'salzstange',
+            'snack',
+            'tortilla'
+        ],
+        'getranke genussmittel' => [
+            'bier',
+            'brause',
+            'cola',
+            'drink',
+            'eistee',
+            'getrank',
+            'kaffee',
+            'kakao',
+            'limonade',
+            'nektar',
+            'saft',
+            'smoothie',
+            'tee',
+            'wasser',
+            'wein'
+        ],
+        'herzhafte backwaren' => [
+            'backware',
+            'baguette',
+            'brezel',
+            'brot',
+            'brotchen',
+            'bun',
+            'ciabatta',
+            'croissant',
+            'semmel',
+            'stange',
+            'teig',
+            'toast',
+            'tortilla',
+            'wrap',
+            'zopf'
+        ],
+        'susse backwaren' => [
+            'backware',
+            'berliner',
+            'brioche',
+            'brownie',
+            'cake',
+            'croissant',
+            'donut',
+            'geback',
+            'kuchen',
+            'muffin',
+            'plunder',
+            'schnecke',
+            'stollen',
+            'waffel'
+        ]
+    ];
+    private const REQUIRED_PRODUCT_ATTRIBUTES = [
+        'gehackt' => ['gehackt'],
+        'gemahl' => ['gemahl'],
+        'gerieb' => ['gerieb', 'reibekase'],
+        'geschnitt' => ['geschnitt', 'scheiben', 'streifen'],
+        'getrocknet' => ['getrocknet']
     ];
     private const SEARCH_DELAY_MIN_MICROSECONDS = 1_500_000;
     private const SEARCH_DELAY_MAX_MICROSECONDS = 3_000_000;
@@ -557,12 +653,49 @@ final class ReweClient
             }
             $productIsCompatible = false;
             foreach ($this->productSearchQueries(name: $name) as $query) {
-                if ($this->productIsCompatible(query: $query, productName: (string) ($product['name'] ?? ''))) {
+                if (
+                    $this->productIsCompatible(
+                        query: $query,
+                        productName: (string) ($product['name'] ?? ''),
+                        categoryPaths: is_array(value: $product['category_paths'] ?? null)
+                            ? $product['category_paths']
+                            : []
+                    )
+                ) {
                     $productIsCompatible = true;
                     break;
                 }
             }
             if (!$productIsCompatible) {
+                continue;
+            }
+            $normalizedIngredientName = $this->normalize(value: $name);
+            $normalizedProductDescription = $this->normalize(
+                value: (string) ($product['name'] ?? '') .
+                    ' ' .
+                    implode(
+                        separator: ' ',
+                        array: is_array(value: $product['category_paths'] ?? null) ? $product['category_paths'] : []
+                    )
+            );
+            $attributesMatch = true;
+            foreach (self::REQUIRED_PRODUCT_ATTRIBUTES as $ingredientAttribute => $productAttributes) {
+                if (!str_contains(haystack: $normalizedIngredientName, needle: $ingredientAttribute)) {
+                    continue;
+                }
+                $attributeFound = false;
+                foreach ($productAttributes as $productAttribute) {
+                    if (str_contains(haystack: $normalizedProductDescription, needle: $productAttribute)) {
+                        $attributeFound = true;
+                        break;
+                    }
+                }
+                if (!$attributeFound) {
+                    $attributesMatch = false;
+                    break;
+                }
+            }
+            if (!$attributesMatch) {
                 continue;
             }
             $packageAmount = is_numeric(value: $product['base_quantity'] ?? null)
@@ -853,6 +986,18 @@ final class ReweClient
             $detailsUrl = trim(string: (string) ($hit['detailsUrl'] ?? ''));
             $pricing = is_array(value: $hit['pricing'] ?? null) ? $hit['pricing'] : [];
             $tags = is_array(value: $hit['tags'] ?? null) ? $hit['tags'] : [];
+            $categoryDetails = is_array(value: $hit['categoryDetails'] ?? null) ? $hit['categoryDetails'] : [];
+            $categoryPaths = [];
+            foreach ($categoryDetails as $categoryDetail) {
+                if (!is_array(value: $categoryDetail)) {
+                    continue;
+                }
+                $categoryPath = trim(string: (string) ($categoryDetail['path'] ?? ''));
+                if ($categoryPath !== '') {
+                    $categoryPaths[] = $categoryPath;
+                }
+            }
+            $categoryPaths = array_values(array: array_unique(array: $categoryPaths));
             $orderLimit = $hit['orderLimit'] ?? null;
             if (
                 $listingId === '' ||
@@ -873,7 +1018,7 @@ final class ReweClient
                 (is_array(value: $pricing['discount'] ?? null) && $pricing['discount'] !== []) ||
                 in_array(needle: 'discounted', haystack: $tags, strict: true);
             $price = $pricing['currentRetailPrice'] ?? null;
-            if (!$this->productIsCompatible(query: $query, productName: $name)) {
+            if (!$this->productIsCompatible(query: $query, productName: $name, categoryPaths: $categoryPaths)) {
                 continue;
             }
             $products[] = [
@@ -889,6 +1034,7 @@ final class ReweClient
                     : null,
                 'quantity_type' => trim(string: (string) ($hit['quantityType'] ?? '')),
                 'grammage' => trim(string: (string) ($pricing['grammage'] ?? '')),
+                'category_paths' => $categoryPaths,
                 'score' => $this->productScore(query: $query, productName: $name, discount: $discount)
             ];
         }
@@ -1007,7 +1153,8 @@ final class ReweClient
         return $score + ($discount ? 5 : 0);
     }
 
-    private function productIsCompatible(string $query, string $productName): bool
+    /** @param list<string> $categoryPaths */
+    private function productIsCompatible(string $query, string $productName, array $categoryPaths = []): bool
     {
         if ($query === '*') {
             return true;
@@ -1019,6 +1166,30 @@ final class ReweClient
                 str_contains(haystack: $normalizedName, needle: $term) &&
                 !str_contains(haystack: $normalizedQuery, needle: $term)
             ) {
+                return false;
+            }
+        }
+        $normalizedCategories = $this->normalize(value: implode(separator: ' ', array: $categoryPaths));
+        foreach (self::PRODUCT_QUERY_CATEGORY_REQUIREMENTS[$normalizedQuery] ?? [] as $requiredCategory) {
+            if (str_contains(haystack: $normalizedCategories, needle: $requiredCategory)) {
+                return true;
+            }
+        }
+        if (isset(self::PRODUCT_QUERY_CATEGORY_REQUIREMENTS[$normalizedQuery])) {
+            return false;
+        }
+        foreach (self::PRODUCT_CATEGORY_QUERY_CUES as $category => $queryCues) {
+            if (!str_contains(haystack: $normalizedCategories, needle: $category)) {
+                continue;
+            }
+            $queryMatchesCategory = false;
+            foreach ($queryCues as $queryCue) {
+                if (str_contains(haystack: $normalizedQuery, needle: $queryCue)) {
+                    $queryMatchesCategory = true;
+                    break;
+                }
+            }
+            if (!$queryMatchesCategory) {
                 return false;
             }
         }
@@ -1070,7 +1241,15 @@ final class ReweClient
                 $catalogEntry = $this->productCatalog[$catalogIndex];
                 $product = $catalogEntry['product'];
                 $listingId = (string) ($product['listing_id'] ?? '');
-                if (!$this->productIsCompatible(query: $query, productName: (string) ($product['name'] ?? ''))) {
+                if (
+                    !$this->productIsCompatible(
+                        query: $query,
+                        productName: (string) ($product['name'] ?? ''),
+                        categoryPaths: is_array(value: $product['category_paths'] ?? null)
+                            ? $product['category_paths']
+                            : []
+                    )
+                ) {
                     continue;
                 }
                 $product['score'] = $this->productScore(

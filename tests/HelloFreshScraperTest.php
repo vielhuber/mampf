@@ -218,4 +218,40 @@ final class HelloFreshScraperTest extends TestCase
         $this->assertSame(2, $ingredients[0]['selected']['quantity']);
         unlink(filename: $path);
     }
+
+    public function testIngredientMappingReportsProductsWithTheWrongFormAsMissing(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $database = new Database(path: $path);
+        $database->upsertRecipe('a', 'Alpha', 'image', 'https://example.org/a', null);
+        $recipe = $database->recipes('', 1, 10, 2026, 29)[0];
+        $database->updateIngredients(
+            recipeId: (int) $recipe['id'],
+            ingredients: [['name' => 'geriebener Hartkäse', 'amount' => 20, 'unit' => 'g']]
+        );
+        $reweClient = new ReweClient(database: $database, httpClient: new HttpClient(), cookieFile: '/does/not/exist');
+        $reflection = new \ReflectionClass(objectOrClass: $reweClient);
+        $reflection->getProperty(name: 'productsByIngredient')->setValue(
+            $reweClient,
+            [
+                'geriebener hartkase' => [
+                    [
+                        'listing_id' => 'hard-cheese-piece',
+                        'name' => 'Hartkäse am Stück',
+                        'score' => 100
+                    ]
+                ]
+            ]
+        );
+        $reflection->getProperty(name: 'productCatalogLoaded')->setValue($reweClient, true);
+
+        $result = new HelloFreshScraper(database: $database, httpClient: new HttpClient())->scrapeIngredients(
+            reweClient: $reweClient
+        );
+
+        $this->assertSame(0, $result['processed']);
+        $this->assertSame(1, $result['failed']);
+        $this->assertSame(['geriebener Hartkäse' => 1], $result['missing_ingredients']);
+        unlink(filename: $path);
+    }
 }

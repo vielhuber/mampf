@@ -293,7 +293,8 @@ final class Database
         string $weekFilter = 'all',
         string $category = '',
         string $sort = 'favorites_desc',
-        string $userId = ''
+        string $userId = '',
+        int $randomSeed = 0
     ): array {
         $offset = max(0, $page - 1) * $perPage;
         $ingredientCondition = match ($ingredientFilter) {
@@ -309,6 +310,7 @@ final class Database
             'unselected' => 'week_recipes.recipe_id IS NULL',
             default => '1 = 1'
         };
+        $randomMultiplier = (($randomSeed * 1103515245 + 12345) % 2147483646) + 1;
         $secondaryOrder = match ($sort) {
             'favorites_asc' => 'recipes.favorites_count ASC, recipes.name COLLATE NOCASE ASC',
             'ratings_desc'
@@ -326,6 +328,7 @@ final class Database
             'created_asc' => 'recipes.created_at ASC, recipes.id ASC',
             'updated_desc' => 'recipes.updated_at DESC, recipes.id DESC',
             'updated_asc' => 'recipes.updated_at ASC, recipes.id ASC',
+            'random' => '((recipes.id * ' . $randomMultiplier . ') % 2147483647) ASC',
             'ingredients_updated_desc'
                 => "COALESCE(recipes.ingredients_scraped_at, '') DESC, recipes.name COLLATE NOCASE ASC",
             'ingredients_updated_asc'
