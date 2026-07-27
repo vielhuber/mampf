@@ -119,6 +119,66 @@ html.dark textarea {
     color: #f5f5f4;
 }
 
+.ingredient-checkbox {
+    display: grid;
+    width: 1rem;
+    height: 1rem;
+    appearance: none;
+    place-content: center;
+    border: 1px solid #a8a29e;
+    border-radius: 0.25rem;
+    background: #ffffff;
+    transition:
+        background-color 120ms ease,
+        border-color 120ms ease,
+        box-shadow 120ms ease;
+}
+
+.ingredient-checkbox.hidden {
+    display: none;
+}
+
+.ingredient-checkbox::before {
+    width: 0.5rem;
+    height: 0.3rem;
+    content: '';
+    transform: translateY(-0.05rem) rotate(-45deg) scale(0);
+    border-bottom: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    transition: transform 120ms ease;
+}
+
+.ingredient-checkbox:checked {
+    border-color: #047857;
+    background: #047857;
+}
+
+.ingredient-checkbox:checked::before {
+    transform: translateY(-0.05rem) rotate(-45deg) scale(1);
+}
+
+.ingredient-checkbox:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgb(16 185 129 / 25%);
+}
+
+html.dark .ingredient-checkbox {
+    border-color: #78716c;
+    background: #292524;
+}
+
+html.dark .ingredient-checkbox:checked {
+    border-color: #10b981;
+    background: #059669;
+}
+
+@media (pointer: fine) {
+    .ingredient-checkbox,
+    [data-ingredient-inclusion-control].cursor-pointer {
+        cursor: pointer;
+    }
+}
+
 html.dark .hover\:bg-stone-50:hover,
 html.dark .hover\:bg-stone-100:hover {
     background-color: #292524;

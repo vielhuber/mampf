@@ -207,6 +207,11 @@ document.querySelectorAll('[data-confirm]').forEach($form => {
     });
 });
 
+let setIngredientChecked = ($checkbox, checked) => {
+    $checkbox.checked = checked;
+    $checkbox.toggleAttribute('checked', checked);
+};
+
 document.addEventListener('submit', async event => {
     let $form = event.target.closest?.('[data-week-assignment-form]');
     if ($form === null || $form === undefined) {
@@ -238,6 +243,24 @@ document.addEventListener('submit', async event => {
         $button.innerHTML = `<i data-lucide="${selected ? 'minus' : 'plus'}" class="size-4"></i>${selected ? 'Entfernen' : 'Hinzufügen'}`;
         $action.value = selected ? 'remove' : 'assign';
         createIcons({ icons, root: $button });
+
+        let $article = $form.closest('[data-recipe-id]');
+        let $ingredientTemplate = $article?.querySelector('[data-ingredients-template]');
+        let ingredientControls = [
+            ...($ingredientTemplate?.content.querySelectorAll('[data-ingredient-inclusion-control]') || []),
+            ...($ingredientsPopover?.querySelectorAll(
+                `[data-ingredient-inclusion-control][data-recipe-id="${$article?.dataset.recipeId}"]`
+            ) || [])
+        ];
+        ingredientControls.forEach($control => {
+            let $checkbox = $control.querySelector('[data-ingredient-inclusion]');
+            $control.classList.toggle('cursor-pointer', selected);
+            $checkbox.classList.toggle('hidden', !selected);
+            $checkbox.disabled = !selected;
+            if (!selected) {
+                setIngredientChecked($checkbox, true);
+            }
+        });
 
         let $orderButton = document.querySelector('[data-order-button]');
         if ($orderButton !== null) {
@@ -372,6 +395,53 @@ if ($ingredientsPopover !== null) {
     window.addEventListener('resize', positionIngredients);
     window.addEventListener('scroll', hideIngredients, { passive: true });
 }
+
+document.addEventListener('change', async event => {
+    let $checkbox = event.target.closest?.('[data-ingredient-inclusion]');
+    if ($checkbox === null || $checkbox === undefined) {
+        return;
+    }
+    let included = $checkbox.checked;
+    $checkbox.disabled = true;
+    let formData = new FormData();
+    formData.set('csrf', document.body.dataset.csrf || '');
+    formData.set('action', 'ingredient-inclusion');
+    formData.set('recipe_id', $checkbox.dataset.recipeId);
+    formData.set('year', $checkbox.dataset.year);
+    formData.set('week', $checkbox.dataset.week);
+    formData.set('ingredient_key', $checkbox.dataset.ingredientKey);
+    formData.set('included', included ? '1' : '0');
+    try {
+        let response = await fetch('/feedback', { method: 'POST', body: formData });
+        let result = await response.json().catch(() => null);
+        if (!response.ok || result === null) {
+            throw new Error(result?.error || 'Die Zutatenauswahl konnte nicht gespeichert werden.');
+        }
+        document.querySelectorAll('[data-ingredients-template]').forEach($template => {
+            $template.content.querySelectorAll('[data-ingredient-inclusion]').forEach($storedCheckbox => {
+                if (
+                    $storedCheckbox.dataset.recipeId === $checkbox.dataset.recipeId &&
+                    $storedCheckbox.dataset.ingredientKey === $checkbox.dataset.ingredientKey
+                ) {
+                    setIngredientChecked($storedCheckbox, result.included === true);
+                }
+            });
+        });
+        $ingredientsPopover?.querySelectorAll('[data-ingredient-inclusion]').forEach($visibleCheckbox => {
+            if (
+                $visibleCheckbox.dataset.recipeId === $checkbox.dataset.recipeId &&
+                $visibleCheckbox.dataset.ingredientKey === $checkbox.dataset.ingredientKey
+            ) {
+                setIngredientChecked($visibleCheckbox, result.included === true);
+            }
+        });
+    } catch (error) {
+        setIngredientChecked($checkbox, !included);
+        showError(error instanceof Error ? error.message : 'Die Zutatenauswahl konnte nicht gespeichert werden.');
+    } finally {
+        $checkbox.disabled = false;
+    }
+});
 
 document.addEventListener('click', async event => {
     let $button = event.target.closest?.('[data-rating-button]');

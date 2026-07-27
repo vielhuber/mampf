@@ -71,6 +71,17 @@ final class Database
                     FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS week_recipe_ingredient_exclusions (
+                    year INTEGER NOT NULL,
+                    week INTEGER NOT NULL,
+                    recipe_id INTEGER NOT NULL,
+                    ingredient_key TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (year, week, recipe_id, ingredient_key),
+                    FOREIGN KEY (year, week, recipe_id)
+                        REFERENCES week_recipes(year, week, recipe_id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS orders (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     year INTEGER NOT NULL,
@@ -111,6 +122,8 @@ final class Database
                 CREATE INDEX IF NOT EXISTS recipes_name ON recipes(name);
                 CREATE INDEX IF NOT EXISTS week_recipes_week ON week_recipes(year, week);
                 CREATE INDEX IF NOT EXISTS week_recipes_recipe ON week_recipes(recipe_id);
+                CREATE INDEX IF NOT EXISTS week_recipe_ingredient_exclusions_week
+                    ON week_recipe_ingredient_exclusions(year, week, recipe_id);
                 CREATE INDEX IF NOT EXISTS recipe_ratings_recipe ON recipe_ratings(recipe_id);
             SQL
         );
@@ -355,7 +368,14 @@ final class Database
                        COALESCE((
                            SELECT json_group_array(json_object('email', user_email, 'rating', rating))
                            FROM recipe_ratings WHERE recipe_id = recipes.id
-                       ), '[]') AS community_ratings_json
+                       ), '[]') AS community_ratings_json,
+                       COALESCE((
+                           SELECT json_group_array(ingredient_key)
+                           FROM week_recipe_ingredient_exclusions
+                           WHERE year = week_recipes.year
+                             AND week = week_recipes.week
+                             AND recipe_id = recipes.id
+                       ), '[]') AS excluded_ingredient_keys_json
                 FROM recipes
                 LEFT JOIN week_recipes
                   ON week_recipes.recipe_id = recipes.id
@@ -846,6 +866,73 @@ final class Database
         );
     }
 
+    /** @param array<string, mixed> $ingredient */
+    public function ingredientKey(array $ingredient): string
+    {
+        $sourceId = trim(string: (string) ($ingredient['source_id'] ?? ''));
+        if ($sourceId !== '') {
+            return $sourceId;
+        }
+        return mb_strtolower(string: trim(string: (string) ($ingredient['name'] ?? '')));
+    }
+
+    public function setWeekIngredientIncluded(
+        int $recipeId,
+        int $year,
+        int $week,
+        string $ingredientKey,
+        bool $included
+    ): void {
+        $ingredientsJson = $this->connection->fetch_var(
+            <<<'SQL'
+                SELECT recipes.ingredients_json
+                FROM recipes
+                INNER JOIN week_recipes ON week_recipes.recipe_id = recipes.id
+                WHERE recipes.id = ? AND week_recipes.year = ? AND week_recipes.week = ?
+            SQL
+            ,
+            $recipeId,
+            $year,
+            $week
+        );
+        if (!is_string(value: $ingredientsJson)) {
+            throw new RuntimeException(message: 'Das Rezept ist dieser Woche nicht zugeordnet.');
+        }
+        $ingredients = json_decode(json: $ingredientsJson, associative: true);
+        $ingredientExists = false;
+        foreach (is_array(value: $ingredients) ? $ingredients : [] as $ingredient) {
+            if (!is_array(value: $ingredient) || $this->ingredientKey(ingredient: $ingredient) !== $ingredientKey) {
+                continue;
+            }
+            $ingredientExists = true;
+            break;
+        }
+        if (!$ingredientExists) {
+            throw new RuntimeException(message: 'Die Zutat gehört nicht zu diesem Rezept.');
+        }
+        if ($included) {
+            $this->connection->query(
+                'DELETE FROM week_recipe_ingredient_exclusions WHERE year = ? AND week = ? AND recipe_id = ? AND ingredient_key = ?',
+                $year,
+                $week,
+                $recipeId,
+                $ingredientKey
+            );
+            return;
+        }
+        $this->connection->query(
+            <<<'SQL'
+                INSERT OR IGNORE INTO week_recipe_ingredient_exclusions (year, week, recipe_id, ingredient_key)
+                VALUES (?, ?, ?, ?)
+            SQL
+            ,
+            $year,
+            $week,
+            $recipeId,
+            $ingredientKey
+        );
+    }
+
     public function deleteRecipe(string $sourceId): void
     {
         $this->connection->query('DELETE FROM recipes WHERE source_id = ?', $sourceId);
@@ -856,7 +943,15 @@ final class Database
     {
         return $this->connection->fetch_all(
             <<<'SQL'
-                SELECT recipes.* FROM recipes
+                SELECT recipes.*,
+                       COALESCE((
+                           SELECT json_group_array(ingredient_key)
+                           FROM week_recipe_ingredient_exclusions
+                           WHERE year = week_recipes.year
+                             AND week = week_recipes.week
+                             AND recipe_id = recipes.id
+                       ), '[]') AS excluded_ingredient_keys_json
+                FROM recipes
                 INNER JOIN week_recipes ON week_recipes.recipe_id = recipes.id
                 WHERE week_recipes.year = ? AND week_recipes.week = ?
                 ORDER BY recipes.name ASC

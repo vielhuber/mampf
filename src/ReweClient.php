@@ -954,6 +954,14 @@ final class ReweClient
         $missing = [];
         foreach ($recipes as $recipe) {
             $ingredients = json_decode(json: (string) ($recipe['ingredients_json'] ?? ''), associative: true);
+            $excludedIngredientKeys = json_decode(
+                json: (string) ($recipe['excluded_ingredient_keys_json'] ?? '[]'),
+                associative: true
+            );
+            $excludedIngredientKeys = array_fill_keys(
+                keys: is_array(value: $excludedIngredientKeys) ? $excludedIngredientKeys : [],
+                value: true
+            );
             if (!is_array(value: $ingredients) || $ingredients === []) {
                 $missing[] = (string) $recipe['name'] . ': Zutaten nicht importiert';
                 continue;
@@ -961,6 +969,10 @@ final class ReweClient
             foreach ($ingredients as &$ingredient) {
                 if (!is_array(value: $ingredient)) {
                     $missing[] = (string) $recipe['name'] . ': ungültiger Zutateneintrag';
+                    continue;
+                }
+                $ingredientKey = $this->database->ingredientKey(ingredient: $ingredient);
+                if (isset($excludedIngredientKeys[$ingredientKey])) {
                     continue;
                 }
                 $name = trim(string: (string) ($ingredient['name'] ?? ''));

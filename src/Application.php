@@ -497,6 +497,21 @@ final class Application
                 echo json_encode(value: ['note' => $note], flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
                 exit();
             }
+            if ($action === 'ingredient-inclusion') {
+                $year = max(2020, min(2100, (int) ($_POST['year'] ?? date(format: 'o'))));
+                $week = max(1, min(53, (int) ($_POST['week'] ?? date(format: 'W'))));
+                $ingredientKey = trim(string: (string) ($_POST['ingredient_key'] ?? ''));
+                $included = (string) ($_POST['included'] ?? '') === '1';
+                $this->runtime->database->setWeekIngredientIncluded(
+                    recipeId: $recipeId,
+                    year: $year,
+                    week: $week,
+                    ingredientKey: $ingredientKey,
+                    included: $included
+                );
+                echo json_encode(value: ['included' => $included], flags: JSON_THROW_ON_ERROR);
+                exit();
+            }
             if (in_array(needle: $action, haystack: ['assign', 'remove'], strict: true)) {
                 $year = max(2020, min(2100, (int) ($_POST['year'] ?? date(format: 'o'))));
                 $week = max(1, min(53, (int) ($_POST['week'] ?? date(format: 'W'))));
@@ -1229,6 +1244,11 @@ final class Application
                 ? json_decode(json: (string) $recipe['ingredients_json'], associative: true)
                 : [];
             $ingredients = is_array(value: $ingredients) ? $ingredients : [];
+            $excludedIngredientKeys = json_decode(
+                json: (string) ($recipe['excluded_ingredient_keys_json'] ?? '[]'),
+                associative: true
+            );
+            $excludedIngredientKeys = is_array(value: $excludedIngredientKeys) ? $excludedIngredientKeys : [];
             $recipeIngredientCount = (int) $recipe['ingredient_count'];
             $mappedIngredientCount = count(
                 value: array_filter(
@@ -1280,6 +1300,7 @@ final class Application
                     if (!is_array(value: $ingredient)) {
                         continue;
                     }
+                    $ingredientKey = $this->runtime->database->ingredientKey(ingredient: $ingredient);
                     $ingredientName = $this->escape(value: (string) ($ingredient['name'] ?? 'Unbekannte Zutat'));
                     $amount = trim(
                         string: (string) ($ingredient['amount'] ?? '') . ' ' . (string) ($ingredient['unit'] ?? '')
@@ -1306,12 +1327,45 @@ final class Application
                             $this->escape(value: $productLabel) .
                             '</span><i data-lucide="external-link" class="mt-0.5 size-3 shrink-0"></i></a>';
                     }
-                    $ingredientRows .=
-                        '<div class="grid grid-cols-2 gap-4 border-t border-stone-100 px-4 py-2.5 text-sm"><div>' .
+                    $ingredientControlStyle = $selected ? ' cursor-pointer' : '';
+                    $ingredientInputStyle = $selected ? '' : ' hidden';
+                    $ingredientDisabled = $selected ? '' : ' disabled';
+                    $ingredientChecked = in_array(
+                        needle: $ingredientKey,
+                        haystack: $excludedIngredientKeys,
+                        strict: true
+                    )
+                        ? ''
+                        : ' checked';
+                    $ingredientControl =
+                        '<label data-ingredient-inclusion-control data-recipe-id="' .
+                        $id .
+                        '" class="flex min-w-0 items-start gap-2' .
+                        $ingredientControlStyle .
+                        '" title="Für den Warenkorb auswählen"><input data-ingredient-inclusion type="checkbox" data-recipe-id="' .
+                        $id .
+                        '" data-year="' .
+                        $year .
+                        '" data-week="' .
+                        $week .
+                        '" data-ingredient-key="' .
+                        $this->escape(value: $ingredientKey) .
+                        '" aria-label="' .
+                        $ingredientName .
+                        ' für den Warenkorb auswählen" class="ingredient-checkbox mt-0.5 shrink-0' .
+                        $ingredientInputStyle .
+                        '"' .
+                        $ingredientDisabled .
+                        $ingredientChecked .
+                        '><span class="min-w-0">' .
                         $amountHtml .
                         '<span class="font-medium text-stone-800">' .
                         $ingredientName .
-                        '</span></div><div>' .
+                        '</span></span></label>';
+                    $ingredientRows .=
+                        '<div class="grid grid-cols-2 gap-4 border-t border-stone-100 px-4 py-2.5 text-sm"><div>' .
+                        $ingredientControl .
+                        '</div><div>' .
                         $productHtml .
                         '</div></div>';
                 }
