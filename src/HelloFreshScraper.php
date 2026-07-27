@@ -325,7 +325,7 @@ final class HelloFreshScraper
             $reweClient->downloadProductCatalog(
                 progress: $catalogProgress,
                 checkpoint: $checkpoint,
-                refresh: true,
+                refresh: false,
                 retryDelays: $catalogRetryDelays,
                 retryProgress: $catalogRetry
             );

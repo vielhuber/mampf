@@ -429,6 +429,11 @@ final class ReweClientTest extends TestCase
         $this->assertContains('Kabeljaufilet', $method->invoke($client, 'Kabeljaufilet ohne Haut'));
         $this->assertContains('Soba Noodles', $method->invoke($client, 'Sobanudeln'));
         $this->assertContains('Reis Noodles', $method->invoke($client, 'Reisnudeln'));
+        $this->assertContains('Cherrytomaten', $method->invoke($client, 'Kirschtomaten'));
+        $this->assertNotContains(
+            'Karotte',
+            $method->invoke($client, 'Karotte, Brokkoli, Babymais, Buschbohnen Mix')
+        );
     }
 
     public function testSobaNoodlesPreferUnseasonedNoodlesFromCatalog(): void
@@ -769,6 +774,379 @@ final class ReweClientTest extends TestCase
         unlink(filename: $path);
     }
 
+    public function testProductCompatibilityUsesIngredientIntentAndProductCategories(): void
+    {
+        $client = $this->client();
+        $method = new \ReflectionClass(objectOrClass: $client)->getMethod(name: 'productIsCompatible');
+
+        $this->assertFalse(
+            $method->invoke($client, 'Milch', 'ja! Milchreis 500g', ['Kochen & Backen/Reis/Milchreis'], 'Milch')
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Mais',
+                'ja! Erdnuss-Mais-Mix 150g',
+                ['Süßes & Salziges/Nüsse/Erdnüsse'],
+                'Mais'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Salsiccia',
+                'GrünGold Seitan Salsiccia vegan 240g',
+                ['Fleisch & Fisch/Fleischalternativen/Veggie-Würstchen'],
+                'Salsiccia'
+            )
+        );
+        $this->assertTrue(
+            $method->invoke(
+                $client,
+                'Salsiccia',
+                'REWE Feine Welt Salsiccia Classica 300g',
+                ['Fleisch & Fisch/Wurst & Aufschnitt/Brüh- & Bratwurst'],
+                'Salsiccia'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Oregano',
+                'ja! Oregano gerebelt 12g',
+                ['Öle, Soßen & Gewürze/Gewürze/Gewürzkräuter'],
+                'frischer Oregano'
+            )
+        );
+        $this->assertTrue(
+            $method->invoke(
+                $client,
+                'Oregano',
+                'Oregano 20g',
+                ['Obst & Gemüse/Frische Kräuter/Oregano'],
+                'frischer Oregano'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Quinoa',
+                'REWE Bio Quinoa Weiß 500g',
+                ['Kochen & Backen/Getreide/Quinoa'],
+                'roter Quinoa'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Tandoori',
+                'REWE To Go Tandoori Chicken Style Sandwich 160g',
+                ['Fertiggerichte & Konserven/Fertiggerichte/Frische Wraps & Sandwiches'],
+                'Gewürzmischung Tandoori'
+            )
+        );
+        $this->assertTrue(
+            $method->invoke(
+                $client,
+                'Tandoori',
+                'Tandoori Gewürzmischung 50g',
+                ['Öle, Soßen & Gewürze/Gewürzmischungen'],
+                'Gewürzmischung Tandoori'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Hüftsteak',
+                'Schweine Hüftsteaks 300g',
+                ['Fleisch & Fisch/Fleisch/Schweinefleisch'],
+                'Hüftsteak vom Weiderind'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Schokolade',
+                'Kinder Schokolade 50g',
+                ['Süßes & Salziges/Schokolade'],
+                'Schokolade 60%'
+            )
+        );
+        $this->assertTrue(
+            $method->invoke(
+                $client,
+                'Schokolade',
+                'Gepa Bio Schokolade Zartbitter 70% 100g',
+                ['Süßes & Salziges/Schokolade/Tafelschokolade'],
+                'Schokolade 60%'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Manti',
+                'Bruno Banani Deospray Man 150ml',
+                ['Drogerie & Gesundheit/Körperpflege/Deodorants'],
+                'Manti'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Bärlauch',
+                'Schweine Hüftsteaks Tomate Bärlauch 300g',
+                ['Fleisch & Fisch/Fleisch/Schweinefleisch'],
+                'Bärlauch'
+            )
+        );
+        $queries = new \ReflectionClass(objectOrClass: $client)
+            ->getMethod(name: 'productSearchQueries')
+            ->invoke($client, 'Hüftsteak vom Weiderind');
+        $this->assertContains('RinderHüftsteak', $queries);
+        $this->assertContains('Rinder-Minutensteaks', $queries);
+    }
+
+    public function testProductCompatibilityRejectsProcessedVariantsOfBasicIngredients(): void
+    {
+        $client = $this->client();
+        $method = new \ReflectionClass(objectOrClass: $client)->getMethod(name: 'productIsCompatible');
+
+        $this->assertTrue(
+            $method->invoke(
+                $client,
+                'Gurke',
+                'Salatgurke 1 Stück',
+                ['Obst & Gemüse/Frisches Gemüse/Gurken'],
+                'Gurke'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Gurke',
+                'Specht Senf-Gurken 215g',
+                ['Fertiggerichte & Konserven/Gemüsekonserven/Gewürzgurken'],
+                'Gurke'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Kirschtomaten',
+                'REWE Bio Kirschtomaten ganz 400g',
+                ['Fertiggerichte & Konserven/Gemüsekonserven/Tomaten-Konserven'],
+                'Kirschtomaten'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Seelachs',
+                'Nadler Alaska Seelachs Mus 125g',
+                ['Fleisch & Fisch/Fisch & Meeresfrüchte/Lachs & Seelachs'],
+                'Seelachs'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Spinat',
+                'Iglo Spinat mit Alpro vegan 550g',
+                ['Tiefkühlkost/Tiefkühl-Gemüse/Tiefkühl-Spinat'],
+                'Spinat'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'körniger Senf',
+                'Maille Dijon-Senf Honig 200ml',
+                ['Öle, Soßen & Gewürze/Soßen/Senf & Senfsoßen/Dijon-Senf'],
+                'körniger Senf'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Sahnekefir',
+                'ja! Sahnekefir mild Kirsche 250g',
+                ['Käse, Eier & Molkerei/Joghurt, Desserts & Alternativen'],
+                'Sahnekefir'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'lila Karotte',
+                'Karotten 1kg',
+                ['Obst & Gemüse/Frisches Gemüse/Wurzelgemüse/Möhren'],
+                'lila Karotte'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Orange',
+                'Ruf Bio Orangen Schale gerieben 5g',
+                ['Kochen & Backen/Backzutaten/Klassische Backzutaten/Backaromen'],
+                'Orange, bio'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Paprika',
+                'Paprika rot 500g',
+                ['Obst & Gemüse/Frisches Gemüse/Paprika & Chili'],
+                'Paprika, eingelegt'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Chili-Nudeln',
+                'Followfood Bio Tasty + Saucy Sweet Chili Noodles 160g',
+                ['Fertiggerichte & Konserven/Instant-Nudeln'],
+                'Chili-Nudeln'
+            )
+        );
+        $this->assertFalse(
+            $method->invoke(
+                $client,
+                'Orange',
+                'Meßmer Bio Orange Ingwer 55g, 20 Beutel',
+                ['Kaffee, Tee & Kakao/Tee/Früchtetee'],
+                'Orange, bio'
+            )
+        );
+    }
+
+    public function testSmallSeasoningAmountPrefersSpiceOverFreshProduce(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $client = new ReweClient(
+            database: new Database(path: $path),
+            httpClient: new HttpClient(),
+            cookieFile: '/does/not/exist'
+        );
+        new \ReflectionClass(objectOrClass: $client)
+            ->getMethod(name: 'hydrateProductCatalog')
+            ->invoke(
+                $client,
+                [
+                    [
+                        'listing_id' => 'fresh-chili-mix',
+                        'name' => 'REWE Bio Chili Mix 80g',
+                        'base_quantity' => 80,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Obst & Gemüse/Frisches Gemüse/Paprika & Chili']
+                    ],
+                    [
+                        'listing_id' => 'ground-chili-mix',
+                        'name' => 'REWE Beste Wahl Chili Mix gemahlen 39g',
+                        'base_quantity' => 39,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Öle, Soßen & Gewürze/Gewürze/Chili-Gewürz']
+                    ],
+                    [
+                        'listing_id' => 'dried-basil',
+                        'name' => 'ja! Basilikum gerebelt 15g',
+                        'base_quantity' => 15,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Öle, Soßen & Gewürze/Gewürze/Gewürzkräuter']
+                    ],
+                    [
+                        'listing_id' => 'fresh-basil',
+                        'name' => 'REWE Bio Basilikum im Topf',
+                        'category_paths' => ['Obst & Gemüse/Frische Kräuter/Basilikum']
+                    ],
+                    [
+                        'listing_id' => 'ground-coriander',
+                        'name' => 'REWE Beste Wahl Koriander gemahlen 32g',
+                        'base_quantity' => 32,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Öle, Soßen & Gewürze/Gewürze/Gewürzkräuter']
+                    ],
+                    [
+                        'listing_id' => 'dried-coriander-leaves',
+                        'name' => 'Ostmann Korianderblätter gerebelt 10g',
+                        'base_quantity' => 10,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Öle, Soßen & Gewürze/Gewürze/Gewürzkräuter']
+                    ]
+                ]
+            );
+
+        $products = $client->productsForIngredient(name: 'milder Chili-Mix');
+        $selected = $client->selectProductForIngredient(
+            name: 'milder Chili-Mix',
+            amount: 2,
+            unit: 'g',
+            products: $products
+        );
+        $corianderProducts = $client->productsForIngredient(name: 'Koriander');
+        $coriander = $client->selectProductForIngredient(
+            name: 'Koriander',
+            amount: 10,
+            unit: 'g',
+            products: $corianderProducts
+        );
+
+        $this->assertSame('ground-chili-mix', $selected['listing_id']);
+        $this->assertSame('fresh-basil', $client->productsForIngredient(name: 'Basilikum')[0]['listing_id']);
+        $this->assertSame('dried-coriander-leaves', $coriander['listing_id']);
+        unlink(filename: $path);
+    }
+
+    public function testCatalogMatchingRejectsUnrelatedPrefixesAndKeepsRelevanceAheadOfPackageSize(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $client = new ReweClient(
+            database: new Database(path: $path),
+            httpClient: new HttpClient(),
+            cookieFile: '/does/not/exist'
+        );
+        new \ReflectionClass(objectOrClass: $client)
+            ->getMethod(name: 'hydrateProductCatalog')
+            ->invoke(
+                $client,
+                [
+                    [
+                        'listing_id' => 'mango',
+                        'name' => 'Mango 1 Stück',
+                        'base_quantity' => 1,
+                        'quantity_type' => 'ST',
+                        'category_paths' => ['Obst & Gemüse/Frisches Obst/Mango']
+                    ],
+                    [
+                        'listing_id' => 'fried-onions',
+                        'name' => 'REWE Beste Wahl Röstzwiebeln 150g',
+                        'base_quantity' => 150,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Öle, Soßen & Gewürze/Gewürze/Zwiebel-Gewürz']
+                    ],
+                    [
+                        'listing_id' => 'potato-snack',
+                        'name' => 'Kartoffelpüree mit Röstzwiebeln und Croûtons 59g',
+                        'base_quantity' => 59,
+                        'quantity_type' => 'G',
+                        'category_paths' => ['Fertiggerichte & Konserven/Instant-Snacks/Kartoffel-Snack']
+                    ]
+                ]
+            );
+
+        $this->assertSame([], $client->productsForIngredient(name: 'Mangold'));
+        $onionProducts = $client->productsForIngredient(name: 'Würziges Zwiebel-Chutney');
+        $selected = $client->selectProductForIngredient(
+            name: 'Würziges Zwiebel-Chutney',
+            amount: 53.6,
+            unit: 'g',
+            products: $onionProducts
+        );
+        $this->assertSame('fried-onions', $selected['listing_id']);
+        unlink(filename: $path);
+    }
+
     public function testCloudflareBasketChallengeHasSpecificError(): void
     {
         $client = $this->client();
@@ -785,7 +1163,7 @@ final class ReweClientTest extends TestCase
         );
     }
 
-    public function testCloudflareChallengeIsDetectedInReweResponses(): void
+    public function testEveryForbiddenReweResponseIsTreatedAsCloudflareBlock(): void
     {
         $client = $this->client();
         $method = new \ReflectionClass(objectOrClass: $client)->getMethod(name: 'isCloudflareChallenge');
@@ -793,7 +1171,8 @@ final class ReweClientTest extends TestCase
         $this->assertTrue(
             $method->invoke($client, new HttpResponse(status: 403, body: '<script>window._cf_chl_opt = {};</script>'))
         );
-        $this->assertFalse($method->invoke($client, new HttpResponse(status: 403, body: 'Forbidden')));
+        $this->assertTrue($method->invoke($client, new HttpResponse(status: 403, body: 'Forbidden')));
+        $this->assertFalse($method->invoke($client, new HttpResponse(status: 401, body: 'Unauthorized')));
     }
 
     public function testCloudflareAccessIsRetriedWithTheConfiguredBackoff(): void

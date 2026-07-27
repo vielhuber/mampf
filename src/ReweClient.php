@@ -10,7 +10,7 @@ use RuntimeException;
 
 final class ReweClient
 {
-    public const PRODUCT_SEARCH_VERSION = 11;
+    public const PRODUCT_SEARCH_VERSION = 13;
 
     private const BASE_URL = 'https://www.rewe.de';
     private const SEARCH_URL = self::BASE_URL . '/shop/productList';
@@ -113,6 +113,7 @@ final class ReweClient
         'korniger senf' => 'Dijon Senf',
         'kirschtomatenpolpa' => 'Polpa Tomatenfruchtfleisch',
         'ketjap manis' => 'Sojasauce',
+        'kirschtomaten' => 'Cherrytomaten',
         'kumin' => 'Kreuzkümmel gemahlen',
         'maggikraut' => 'Liebstöckel',
         'mandelblattchen' => 'Mandeln gehobelt',
@@ -201,7 +202,11 @@ final class ReweClient
         'ei' => 'Eier'
     ];
     private const SEARCH_COMPOUND_SUFFIXES = [
+        'blatt',
+        'blatter',
         'bohnen',
+        'brezel',
+        'brezeln',
         'chutney',
         'couscous',
         'creme',
@@ -209,6 +214,8 @@ final class ReweClient
         'filet',
         'kase',
         'konfiture',
+        'kerne',
+        'kraut',
         'mischung',
         'nudeln',
         'paste',
@@ -221,33 +228,102 @@ final class ReweClient
         'tortillas'
     ];
     private const PRODUCT_CARRIER_TERMS = [
+        'auflauf',
+        'aufguss',
         'aufstrich',
         'baguette',
         'bonbon',
+        'brot',
         'chips',
+        'ciabatta',
         'cornichon',
+        'couscous',
+        'creme',
+        'curry',
         'dip',
         'dressing',
+        'eintopf',
+        'eis',
         'emoji',
+        'fries',
         'frischkase',
+        'grutze',
+        'hahnchen',
         'heringsfilet',
+        'heu',
+        'honig',
+        'hummus',
         'joghurt',
         'keks',
+        'krokant',
+        'kresse',
         'kuchen',
+        'klosschen',
+        'lachs',
+        'marmelade',
+        'maultasche',
+        'mayonnaise',
         'meerrettich',
+        'mix',
+        'mochi',
+        'mus',
         'nugget',
+        'panade',
         'pasta',
+        'paniert',
+        'pesto',
         'pizza',
+        'pommes',
+        'pops',
         'pudding',
+        'quark',
+        'rahm',
+        'reis',
+        'riegel',
+        'sahne',
+        'salz',
         'saure',
+        'saucy',
+        'sandwich',
+        'scheiben',
+        'schnitte',
+        'schinken',
+        'schwein',
+        'senf',
         'sosse',
         'schlemmerfilet',
+        'streichcreme',
         'suppe',
+        'sirup',
         'tagliatelle',
+        'terrine',
+        'thunfisch',
         'tomaten',
         'torte',
         'wurst',
         'zopf'
+    ];
+    private const PRODUCT_REJECTED_CATEGORY_CUES = ['baby kind', 'drogerie gesundheit', 'tierbedarf'];
+    private const PRODUCT_COLOR_ATTRIBUTES = [
+        'bunt' => ['bunt', 'multicolor'],
+        'gelb' => ['gelb'],
+        'grun' => ['grun'],
+        'lila' => ['lila', 'purple', 'violett'],
+        'rot' => ['rot'],
+        'schwarz' => ['schwarz'],
+        'weiss' => ['weiss', 'hell']
+    ];
+    private const PRODUCT_FLAVOR_TERMS = [
+        'apfel',
+        'banane',
+        'erdbeer',
+        'heidelbeer',
+        'himbeer',
+        'kirsch',
+        'maracuja',
+        'pfirsich',
+        'vanille',
+        'walnuss'
     ];
     private const PRODUCT_QUERY_CATEGORY_REQUIREMENTS = [
         'buffelmozzarella' => ['kase eier molkerei'],
@@ -258,6 +334,13 @@ final class ReweClient
     ];
     private const PRODUCT_CATEGORY_QUERY_CUES = [
         'bonbons kaugummi' => ['bonbon', 'kaugummi', 'lutsch', 'husten'],
+        'backaromen' => ['aroma', 'gerieb', 'schale', 'zeste'],
+        'frische wraps sandwiches' => ['sandwich', 'wrap'],
+        'frucht musliriegel' => ['riegel'],
+        'gummibarchen lakritz' => ['fruchtgummi', 'gummibarchen', 'lakritz'],
+        'eiscreme eiswurfel' => ['eis', 'eiscreme', 'gelato', 'sorbet'],
+        'fixprodukte' => ['fix', 'gewurzmischung', 'mischung'],
+        'cerealien musli' => ['cerealien', 'cornflakes', 'flakes', 'flocken', 'musli', 'pops'],
         'chips knabbereien' => [
             'bake roll',
             'cashew',
@@ -291,6 +374,61 @@ final class ReweClient
             'wasser',
             'wein'
         ],
+        'kaffee tee kakao' => ['kaffee', 'kakao', 'tee'],
+        'fleischalternativen' => [
+            'alternative',
+            'pflanzlich',
+            'seitan',
+            'tofu',
+            'vegan',
+            'vegetarisch',
+            'veggie'
+        ],
+        'feinkostsalate' => ['salat'],
+        'fruchtaufstriche' => ['aufstrich', 'chutney', 'konfiture', 'marmelade', 'mus'],
+        'gemusekonserven gewurzgurken' => [
+            'brotzeitgurke',
+            'cornichon',
+            'eingelegt',
+            'gurkenstick',
+            'gewurzgurke',
+            'sandwich gurke',
+            'saure gurke',
+            'senf gurke'
+        ],
+        'gemusekonserven grunkohl' => ['dose', 'glas', 'konserve', 'oldenburger'],
+        'gemusekonserven pilze' => ['dose', 'eingelegt', 'glas', 'konserve', 'scheiben'],
+        'gemusekonserven tomaten konserven' => [
+            'dose',
+            'ganz geschalt',
+            'gehackt',
+            'konserve',
+            'polpa',
+            'stuckig',
+            'ungeschalt'
+        ],
+        'mayonnaise salatcreme' => ['aioli', 'mayo', 'mayonnaise', 'salatcreme'],
+        'salate to go' => ['salat'],
+        'susses salziges nusse' => ['cashew', 'erdnuss', 'mandel', 'nuss', 'pistazie'],
+        'susses salziges schokolade' => [
+            'kakao',
+            'kuverture',
+            'praline',
+            'schokolade',
+            'schoko'
+        ],
+        'susswaren popcorn' => ['popcorn'],
+        'sussgeback' => [
+            'berliner',
+            'brownie',
+            'cookie',
+            'geback',
+            'keks',
+            'kuchen',
+            'muffin',
+            'oblate',
+            'waffel'
+        ],
         'herzhafte backwaren' => [
             'backware',
             'baguette',
@@ -308,6 +446,16 @@ final class ReweClient
             'wrap',
             'zopf'
         ],
+        'knackebrot zwieback reiswaffeln' => [
+            'brot',
+            'cracker',
+            'knacke',
+            'reiswaffel',
+            'waffel',
+            'zwieback'
+        ],
+        'mikrowellenfertiggerichte' => ['fertiggericht', 'mikrowelle'],
+        'suppen eintopfe' => ['eintopf', 'suppe'],
         'susse backwaren' => [
             'backware',
             'berliner',
@@ -323,14 +471,50 @@ final class ReweClient
             'schnecke',
             'stollen',
             'waffel'
+        ],
+        'tiefkuhl fertiggerichte' => [
+            'auflauf',
+            'curry',
+            'fertiggericht',
+            'gericht',
+            'gnocchi',
+            'lasagne',
+            'manti',
+            'maultasche',
+            'nugget',
+            'pfanne',
+            'pizza',
+            'ravioli',
+            'schnitzel',
+            'teigtasche',
+            'tortellini'
+        ],
+        'wurst aufschnitt' => [
+            'aufschnitt',
+            'bacon',
+            'mortadella',
+            'salami',
+            'salsiccia',
+            'schinken',
+            'speck',
+            'wurst'
         ]
     ];
     private const REQUIRED_PRODUCT_ATTRIBUTES = [
+        'bio' => ['bio', 'biologisch'],
+        'bocconcino' => ['bocconcino', 'kugel', 'mini'],
+        'eingelegt' => ['eingelegt', 'konserve'],
         'gehackt' => ['gehackt'],
         'gemahl' => ['gemahl'],
         'gerieb' => ['gerieb', 'reibekase'],
+        'gerasp' => ['gerasp', 'gerieb', 'reibekase'],
+        'gerostet' => ['gerostet'],
+        'scheiben' => ['aufschnitt', 'geschnitt', 'scheiben'],
         'geschnitt' => ['geschnitt', 'scheiben', 'streifen'],
-        'getrocknet' => ['getrocknet']
+        'getrocknet' => ['gerebelt', 'getrocknet'],
+        'ganz' => ['ganz'],
+        'vorgegar' => ['vorgegar'],
+        'vorgekoch' => ['vorgekoch']
     ];
     private const SEARCH_DELAY_MIN_MICROSECONDS = 1_500_000;
     private const SEARCH_DELAY_MAX_MICROSECONDS = 3_000_000;
@@ -659,7 +843,8 @@ final class ReweClient
                         productName: (string) ($product['name'] ?? ''),
                         categoryPaths: is_array(value: $product['category_paths'] ?? null)
                             ? $product['category_paths']
-                            : []
+                            : [],
+                        ingredientName: $name
                     )
                 ) {
                     $productIsCompatible = true;
@@ -667,35 +852,6 @@ final class ReweClient
                 }
             }
             if (!$productIsCompatible) {
-                continue;
-            }
-            $normalizedIngredientName = $this->normalize(value: $name);
-            $normalizedProductDescription = $this->normalize(
-                value: (string) ($product['name'] ?? '') .
-                    ' ' .
-                    implode(
-                        separator: ' ',
-                        array: is_array(value: $product['category_paths'] ?? null) ? $product['category_paths'] : []
-                    )
-            );
-            $attributesMatch = true;
-            foreach (self::REQUIRED_PRODUCT_ATTRIBUTES as $ingredientAttribute => $productAttributes) {
-                if (!str_contains(haystack: $normalizedIngredientName, needle: $ingredientAttribute)) {
-                    continue;
-                }
-                $attributeFound = false;
-                foreach ($productAttributes as $productAttribute) {
-                    if (str_contains(haystack: $normalizedProductDescription, needle: $productAttribute)) {
-                        $attributeFound = true;
-                        break;
-                    }
-                }
-                if (!$attributeFound) {
-                    $attributesMatch = false;
-                    break;
-                }
-            }
-            if (!$attributesMatch) {
                 continue;
             }
             $packageAmount = is_numeric(value: $product['base_quantity'] ?? null)
@@ -729,6 +885,28 @@ final class ReweClient
             };
             $quantity = 1;
             $selectionScore = (int) ($product['score'] ?? 0);
+            $normalizedCategories = $this->normalize(
+                value: implode(
+                    separator: ' ',
+                    array: is_array(value: $product['category_paths'] ?? null) ? $product['category_paths'] : []
+                )
+            );
+            if (
+                $requiredUnit === 'G' &&
+                $requiredAmount > 0 &&
+                $requiredAmount <= 25 &&
+                str_contains(haystack: $normalizedCategories, needle: 'gewurze')
+            ) {
+                $selectionScore += 50;
+            }
+            $normalizedIngredient = $this->normalize(value: $name);
+            $normalizedProductName = $this->normalize(value: (string) ($product['name'] ?? ''));
+            if (
+                !str_contains(haystack: $normalizedIngredient, needle: 'gemahl') &&
+                str_contains(haystack: $normalizedProductName, needle: 'gemahl')
+            ) {
+                $selectionScore -= 25;
+            }
             $continuousUnits = ['G', 'ML'];
             if (
                 $requiredAmount > 0 &&
@@ -738,15 +916,15 @@ final class ReweClient
             ) {
                 $quantity = max(1, (int) ceil(num: $requiredAmount / $packageAmount));
                 $wasteRatio = (($quantity * $packageAmount) - $requiredAmount) / $requiredAmount;
-                $selectionScore += 50 - min(50, (int) round(num: $wasteRatio * 20));
+                $selectionScore += 15 - min(15, (int) round(num: $wasteRatio * 5));
             }
             if ($requiredAmount > 0 && $requiredUnit === 'STK' && $packageAmount > 0) {
                 if ($packageUnit === 'STK') {
                     $quantity = max(1, (int) ceil(num: $requiredAmount / $packageAmount));
-                    $selectionScore += 60;
+                    $selectionScore += 20;
                 }
                 if (in_array(needle: $packageUnit, haystack: $continuousUnits, strict: true)) {
-                    $selectionScore += max(0, 50 - (int) round(num: $packageAmount / 10));
+                    $selectionScore += max(0, 15 - (int) round(num: $packageAmount / 50));
                 }
             }
             if ($selectionScore <= $bestScore) {
@@ -1154,14 +1332,69 @@ final class ReweClient
     }
 
     /** @param list<string> $categoryPaths */
-    private function productIsCompatible(string $query, string $productName, array $categoryPaths = []): bool
+    private function productIsCompatible(
+        string $query,
+        string $productName,
+        array $categoryPaths = [],
+        ?string $ingredientName = null
+    ): bool
     {
         if ($query === '*') {
             return true;
         }
         $normalizedQuery = $this->normalize(value: $query);
         $normalizedName = $this->normalize(value: $productName);
+        $normalizedIngredient = $this->normalize(value: $ingredientName ?? $query);
+        $normalizedCategories = $this->normalize(value: implode(separator: ' ', array: $categoryPaths));
+        $normalizedProductDescription = trim(string: $normalizedName . ' ' . $normalizedCategories);
+        foreach (self::REQUIRED_PRODUCT_ATTRIBUTES as $ingredientAttribute => $productAttributes) {
+            if (!str_contains(haystack: $normalizedIngredient, needle: $ingredientAttribute)) {
+                continue;
+            }
+            $attributeFound = false;
+            foreach ($productAttributes as $productAttribute) {
+                if (str_contains(haystack: $normalizedProductDescription, needle: $productAttribute)) {
+                    $attributeFound = true;
+                    break;
+                }
+            }
+            if (!$attributeFound) {
+                return false;
+            }
+        }
+        foreach (self::PRODUCT_REJECTED_CATEGORY_CUES as $rejectedCategory) {
+            if (str_contains(haystack: $normalizedCategories, needle: $rejectedCategory)) {
+                return false;
+            }
+        }
+        foreach (self::PRODUCT_FLAVOR_TERMS as $flavorTerm) {
+            if (
+                str_contains(haystack: $normalizedName, needle: $flavorTerm) &&
+                !str_contains(haystack: $normalizedIngredient, needle: $flavorTerm)
+            ) {
+                return false;
+            }
+        }
+        if (
+            preg_match(pattern: '~(?:^| )mit(?: |$)~', subject: $normalizedName) === 1 &&
+            preg_match(pattern: '~(?:^| )mit(?: |$)~', subject: $normalizedQuery) !== 1 &&
+            !(
+                str_contains(haystack: $normalizedCategories, needle: 'brot cerealien aufstriche') &&
+                str_contains(haystack: $normalizedName, needle: 'sesam')
+            )
+        ) {
+            return false;
+        }
+        if (
+            preg_match(pattern: '~(?:^| )bar(?: |$)~', subject: $normalizedName) === 1 &&
+            preg_match(pattern: '~(?:^| )bar(?: |$)~', subject: $normalizedQuery) !== 1
+        ) {
+            return false;
+        }
         foreach (self::PRODUCT_CARRIER_TERMS as $term) {
+            if ($term === 'salz' && str_contains(haystack: $normalizedIngredient, needle: 'gewurzmischung')) {
+                continue;
+            }
             if (
                 str_contains(haystack: $normalizedName, needle: $term) &&
                 !str_contains(haystack: $normalizedQuery, needle: $term)
@@ -1169,7 +1402,123 @@ final class ReweClient
                 return false;
             }
         }
-        $normalizedCategories = $this->normalize(value: implode(separator: ' ', array: $categoryPaths));
+        $ingredientWords = array_filter(array: explode(separator: ' ', string: $normalizedIngredient));
+        $productWords = array_filter(array: explode(separator: ' ', string: $normalizedProductDescription));
+        foreach (self::PRODUCT_COLOR_ATTRIBUTES as $ingredientAttribute => $productAttributes) {
+            $ingredientHasAttribute = false;
+            foreach ($ingredientWords as $ingredientWord) {
+                if (
+                    preg_match(
+                        pattern: '~^' . preg_quote(str: $ingredientAttribute, delimiter: '~') . '(?:e|er|es|en|em)?$~',
+                        subject: $ingredientWord
+                    ) === 1
+                ) {
+                    $ingredientHasAttribute = true;
+                    break;
+                }
+            }
+            if (!$ingredientHasAttribute) {
+                continue;
+            }
+            $productHasAttribute = false;
+            foreach ($productWords as $productWord) {
+                foreach ($productAttributes as $productAttribute) {
+                    if (
+                        preg_match(
+                            pattern: '~^' . preg_quote(str: $productAttribute, delimiter: '~') .
+                                '(?:e|er|es|en|em|ung)?$~',
+                            subject: $productWord
+                        ) === 1
+                    ) {
+                        $productHasAttribute = true;
+                        break 2;
+                    }
+                }
+            }
+            if (!$productHasAttribute) {
+                return false;
+            }
+        }
+        $requiresFreshProduct = false;
+        foreach ($ingredientWords as $ingredientWord) {
+            if (preg_match(pattern: '~^frisch(?:e|er|es|en|em)?$~', subject: $ingredientWord) === 1) {
+                $requiresFreshProduct = true;
+                break;
+            }
+        }
+        if ($requiresFreshProduct) {
+            $freshProduct = preg_match(
+                pattern: '~(?:^| )frisch(?:e|er|es|en|em)?(?: |$)~',
+                subject: $normalizedName
+            ) === 1;
+            foreach (
+                ['fleisch fisch', 'gekuhlte nudeln teigwaren', 'obst gemuse']
+                as $freshCategory
+            ) {
+                if (str_contains(haystack: $normalizedCategories, needle: $freshCategory)) {
+                    $freshProduct = true;
+                    break;
+                }
+            }
+            if (!$freshProduct) {
+                return false;
+            }
+        }
+        if (str_contains(haystack: $normalizedIngredient, needle: 'gewurzmischung')) {
+            $seasoningProduct = false;
+            foreach (['bouillons bruhen', 'gewurz', 'salz'] as $seasoningCategory) {
+                if (str_contains(haystack: $normalizedCategories, needle: $seasoningCategory)) {
+                    $seasoningProduct = true;
+                    break;
+                }
+            }
+            if (!$seasoningProduct) {
+                return false;
+            }
+        }
+        foreach (
+            [
+                'hahnchen' => ['geflugel', 'hahnchen', 'huhn'],
+                'lamm' => ['lamm'],
+                'pute' => ['pute', 'truthahn'],
+                'rind' => ['rind'],
+                'schwein' => ['schwein']
+            ]
+            as $ingredientSpecies => $productSpecies
+        ) {
+            if (!str_contains(haystack: $normalizedIngredient, needle: $ingredientSpecies)) {
+                continue;
+            }
+            $speciesMatches = false;
+            foreach ($productSpecies as $species) {
+                if (str_contains(haystack: $normalizedProductDescription, needle: $species)) {
+                    $speciesMatches = true;
+                    break;
+                }
+            }
+            if (!$speciesMatches) {
+                return false;
+            }
+        }
+        if (
+            preg_match(pattern: '~^sahnejoghurt(?: bio)?$~', subject: $normalizedIngredient) === 1 &&
+            str_contains(haystack: $normalizedCategories, needle: 'fruchtjoghurt')
+        ) {
+            return false;
+        }
+        if (
+            preg_match(pattern: '~(\d{1,3})\s*%~u', subject: $ingredientName ?? $query, matches: $percentage) === 1
+        ) {
+            if (preg_match(pattern: '~(\d{1,3})\s*%~u', subject: $productName, matches: $productPercentage) !== 1) {
+                return false;
+            }
+            if (
+                (int) $productPercentage[1] < (int) $percentage[1] ||
+                (int) $productPercentage[1] > (int) $percentage[1] + 15
+            ) {
+                return false;
+            }
+        }
         foreach (self::PRODUCT_QUERY_CATEGORY_REQUIREMENTS[$normalizedQuery] ?? [] as $requiredCategory) {
             if (str_contains(haystack: $normalizedCategories, needle: $requiredCategory)) {
                 return true;
@@ -1214,12 +1563,19 @@ final class ReweClient
                     $productWords = $this->productCatalog[$catalogIndex]['normalized_words'];
                     $wordMatches = false;
                     foreach ($productWords as $productWord) {
-                        $lengthDifference = abs(strlen(string: $queryWord) - strlen(string: $productWord));
+                        if ($queryWord === $productWord) {
+                            $wordMatches = true;
+                            break;
+                        }
+                        $shorterWord = strlen(string: $queryWord) < strlen(string: $productWord)
+                            ? $queryWord
+                            : $productWord;
+                        $longerWord = $shorterWord === $queryWord ? $productWord : $queryWord;
+                        $suffix = substr(string: $longerWord, offset: strlen(string: $shorterWord));
                         if (
-                            $queryWord === $productWord ||
-                            ($lengthDifference <= 3 &&
-                                (str_starts_with(haystack: $queryWord, needle: $productWord) ||
-                                    str_starts_with(haystack: $productWord, needle: $queryWord)))
+                            strlen(string: $shorterWord) >= 4 &&
+                            str_starts_with(haystack: $longerWord, needle: $shorterWord) &&
+                            in_array(needle: $suffix, haystack: ['e', 'en', 'er', 'ern', 'es', 'n', 's', 'se'], strict: true)
                         ) {
                             $wordMatches = true;
                             break;
@@ -1247,7 +1603,8 @@ final class ReweClient
                         productName: (string) ($product['name'] ?? ''),
                         categoryPaths: is_array(value: $product['category_paths'] ?? null)
                             ? $product['category_paths']
-                            : []
+                            : [],
+                        ingredientName: $name
                     )
                 ) {
                     continue;
@@ -1260,6 +1617,29 @@ final class ReweClient
                 if (!isset($matches[$listingId]) || $product['score'] > $matches[$listingId]['score']) {
                     $matches[$listingId] = $product;
                 }
+            }
+        }
+        $normalizedIngredient = $this->normalize(value: $name);
+        if (
+            !str_contains(haystack: $normalizedIngredient, needle: 'gerebelt') &&
+            !str_contains(haystack: $normalizedIngredient, needle: 'getrocknet')
+        ) {
+            $freshHerbMatches = array_filter(
+                array: $matches,
+                callback: fn(array $product): bool => str_contains(
+                    haystack: $this->normalize(
+                        value: implode(
+                            separator: ' ',
+                            array: is_array(value: $product['category_paths'] ?? null)
+                                ? $product['category_paths']
+                                : []
+                        )
+                    ),
+                    needle: 'obst gemuse frische krauter'
+                )
+            );
+            if ($freshHerbMatches !== []) {
+                $matches = $freshHerbMatches;
             }
         }
         return $this->rankProducts(products: array_values(array: $matches));
@@ -1335,7 +1715,21 @@ final class ReweClient
                 string: preg_replace(pattern: '~\s*\([^)]*\)~u', replacement: '', subject: $query) ?? $query
             );
             $addQuery($withoutParentheses);
-            $addQuery(explode(separator: ',', string: $withoutParentheses, limit: 2)[0]);
+            $normalizedWithoutParentheses = $this->normalize(value: $withoutParentheses);
+            if (
+                !str_contains(haystack: $normalizedWithoutParentheses, needle: 'mix') &&
+                !str_contains(haystack: $normalizedWithoutParentheses, needle: 'mischung')
+            ) {
+                $addQuery(explode(separator: ',', string: $withoutParentheses, limit: 2)[0]);
+            }
+        }
+        foreach ($queries as $query) {
+            $withBeefType = preg_replace(
+                pattern: '~\b(\p{L}+)\s+vom Weiderind\b~iu',
+                replacement: 'Rinder$1',
+                subject: $query
+            );
+            $addQuery(is_string(value: $withBeefType) ? $withBeefType : $query);
         }
         foreach ($queries as $query) {
             $withoutPreparation = trim(
@@ -1469,6 +1863,9 @@ final class ReweClient
 
         $this->request(url: self::ACCOUNT_URL);
         $loginResponse = $this->request(url: self::BASE_URL . '/mydata/login');
+        if ($this->isCloudflareChallenge(response: $loginResponse)) {
+            throw ReweAccessException::cloudflareChallenge();
+        }
         if ($loginResponse->status !== 200) {
             throw new RuntimeException(
                 message: 'Die REWE-Anmeldung antwortete mit HTTP ' . $loginResponse->status . '.'
@@ -1519,9 +1916,7 @@ final class ReweClient
 
     private function isCloudflareChallenge(HttpResponse $response): bool
     {
-        return $response->status === 403 &&
-            (str_contains(haystack: $response->body, needle: 'Zeig uns, dass du ein Mensch bist') ||
-                str_contains(haystack: $response->body, needle: '_cf_chl_opt'));
+        return $response->status === 403;
     }
 
     private function request(

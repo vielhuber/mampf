@@ -96,12 +96,12 @@ if ($cronStatus !== null) {
             }
             let running = status.running === true;
             let success = status.status === 'success';
-            $cronStatus.classList.toggle('text-sky-700', running);
+            $cronStatus.classList.toggle('text-amber-700', running);
             $cronStatus.classList.toggle('text-emerald-700', !running && success);
             $cronStatus.classList.toggle('text-red-700', !running && !success);
             $cronStatus.textContent = running
-                ? `Cron: läuft${startedLabel === '' ? '' : ` seit ${startedLabel}`} · ⚠️`
-                : `Cron: ${completedLabel} · ${success ? '✅' : '⛔'}`;
+                ? `⚠️ Cron: ${startedLabel === '' ? 'läuft' : startedLabel}`
+                : `${success ? '✅' : '⛔'} Cron: ${completedLabel}`;
             $cronStatus.dataset.syncTitle = running ? 'Cron-Aktualisierung läuft' : 'Letzte Cron-Aktualisierung';
             $cronStatus.dataset.syncMessage = running
                 ? `Der Cronjob läuft${startedLabel === '' ? '' : ` seit ${startedLabel}`} im Hintergrund.`

@@ -1093,8 +1093,8 @@ final class Application
             $syncStatusLabel = match ($syncStatus) {
                 Database::SYNC_STATUS_SUCCESS => '✅',
                 Database::SYNC_STATUS_ERROR => '⛔',
-                Database::SYNC_STATUS_CANCELLED => 'abgebrochen',
-                default => 'noch nie'
+                Database::SYNC_STATUS_CANCELLED => '⚠️',
+                default => '○'
             };
             $syncStatusStyle = match ($syncStatus) {
                 Database::SYNC_STATUS_SUCCESS => 'text-emerald-700',
@@ -1119,11 +1119,13 @@ final class Application
                         : 'Es ist noch kein Ergebnis vorhanden.';
             }
             $syncText =
+                $syncStatusLabel .
+                ' ' .
                 $syncConfig['label'] .
                 ': ' .
                 ($syncCompletedAt === null
                     ? 'noch nie'
-                    : $this->formatSyncRunTime(timestamp: $syncCompletedAt) . ' · ' . $syncStatusLabel);
+                    : $this->formatSyncRunTime(timestamp: $syncCompletedAt));
             if ($syncStatusHtml !== '') {
                 $syncStatusHtml .= '<span class="text-stone-300"> · </span>';
             }
@@ -1151,20 +1153,20 @@ final class Application
         $cronVisible = $cronStatus['running'] || $cronCompletedLabel !== '';
         $cronHiddenClass = $cronVisible ? '' : ' hidden';
         $cronText = $cronStatus['running']
-            ? 'Cron: läuft' . ($cronStartedLabel === '' ? '' : ' seit ' . $cronStartedLabel) . ' · ⚠️'
-            : 'Cron: ' . $cronCompletedLabel . ' · ' . ($cronStatus['status'] === 'success' ? '✅' : '⛔');
+            ? '⚠️ Cron: ' . ($cronStartedLabel === '' ? 'läuft' : $cronStartedLabel)
+            : ($cronStatus['status'] === 'success' ? '✅' : '⛔') . ' Cron: ' . $cronCompletedLabel;
         $cronTitle = $cronStatus['running'] ? 'Cron-Aktualisierung läuft' : 'Letzte Cron-Aktualisierung';
         $cronMessage = $cronStatus['running']
             ? 'Der Cronjob läuft im Hintergrund.'
             : $cronStatus['message'];
         $cronIcon = $cronStatus['running'] ? 'info' : ($cronStatus['status'] === 'success' ? 'success' : 'error');
         $cronStyle = $cronStatus['running']
-            ? 'text-sky-700'
+            ? 'text-amber-700'
             : ($cronStatus['status'] === 'success' ? 'text-emerald-700' : 'text-red-700');
         $cronStatusHtml =
-            '<div data-cron-row class="absolute right-0 top-3 whitespace-nowrap' .
+            '<span data-cron-row class="whitespace-nowrap' .
             $cronHiddenClass .
-            '"><button type="button" data-sync-status data-cron-status data-sync-title="' .
+            '"><span class="text-stone-300"> · </span><button type="button" data-sync-status data-cron-status data-sync-title="' .
             $this->escape(value: $cronTitle) .
             '" data-sync-message="' .
             $this->escape(value: $cronMessage) .
@@ -1174,7 +1176,7 @@ final class Application
             $cronStyle .
             '">' .
             $this->escape(value: $cronText) .
-            '</button></div>';
+            '</button></span>';
         $randomSeedField =
             $sort === 'random' ? '<input type="hidden" name="random_seed" value="' . $randomSeed . '">' : '';
         $searchValue = $this->escape(value: $search);
@@ -1550,7 +1552,7 @@ final class Application
                                 <button data-theme-toggle type="button" title="Dark Mode aktivieren" aria-label="Dark Mode aktivieren" class="hidden size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100 lg:grid"><i data-lucide="moon" class="size-4"></i></button>
                                 <button data-logout type="button" title="Abmelden" aria-label="Abmelden" class="grid size-8 place-items-center rounded-md border border-stone-300 text-stone-600 hover:bg-stone-100"><i data-lucide="log-out" class="size-4"></i></button>
                             </div>
-                            <div class="relative hidden h-3 whitespace-nowrap text-[10px] leading-3 lg:block"><div class="flex items-center">{$syncStatusHtml}</div>{$cronStatusHtml}</div>
+                            <div class="hidden h-3 items-center whitespace-nowrap text-[10px] leading-3 lg:flex">{$syncStatusHtml}{$cronStatusHtml}</div>
                         </div>
                     </div>
                 </header>
