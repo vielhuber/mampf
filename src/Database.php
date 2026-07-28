@@ -876,61 +876,74 @@ final class Database
         return mb_strtolower(string: trim(string: (string) ($ingredient['name'] ?? '')));
     }
 
-    public function setWeekIngredientIncluded(
+    /** @param list<string> $excludedIngredientKeys */
+    public function saveWeekIngredientSelection(
         int $recipeId,
         int $year,
         int $week,
-        string $ingredientKey,
-        bool $included
+        array $excludedIngredientKeys,
+        bool $assign
     ): void {
-        $ingredientsJson = $this->connection->fetch_var(
-            <<<'SQL'
-                SELECT recipes.ingredients_json
-                FROM recipes
-                INNER JOIN week_recipes ON week_recipes.recipe_id = recipes.id
-                WHERE recipes.id = ? AND week_recipes.year = ? AND week_recipes.week = ?
-            SQL
-            ,
-            $recipeId,
-            $year,
-            $week
-        );
-        if (!is_string(value: $ingredientsJson)) {
-            throw new RuntimeException(message: 'Das Rezept ist dieser Woche nicht zugeordnet.');
-        }
-        $ingredients = json_decode(json: $ingredientsJson, associative: true);
-        $ingredientExists = false;
-        foreach (is_array(value: $ingredients) ? $ingredients : [] as $ingredient) {
-            if (!is_array(value: $ingredient) || $this->ingredientKey(ingredient: $ingredient) !== $ingredientKey) {
-                continue;
+        $this->connection->query('BEGIN IMMEDIATE');
+        try {
+            if ($assign) {
+                $this->assignRecipe(recipeId: $recipeId, year: $year, week: $week);
             }
-            $ingredientExists = true;
-            break;
-        }
-        if (!$ingredientExists) {
-            throw new RuntimeException(message: 'Die Zutat gehört nicht zu diesem Rezept.');
-        }
-        if ($included) {
+            $ingredientsJson = $this->connection->fetch_var(
+                <<<'SQL'
+                    SELECT recipes.ingredients_json
+                    FROM recipes
+                    INNER JOIN week_recipes ON week_recipes.recipe_id = recipes.id
+                    WHERE recipes.id = ? AND week_recipes.year = ? AND week_recipes.week = ?
+                SQL
+                ,
+                $recipeId,
+                $year,
+                $week
+            );
+            $ingredients = is_string(value: $ingredientsJson)
+                ? json_decode(json: $ingredientsJson, associative: true)
+                : null;
+            if (!is_array(value: $ingredients)) {
+                throw new RuntimeException(message: 'Das Rezept ist dieser Woche nicht zugeordnet.');
+            }
+            $validIngredientKeys = [];
+            foreach ($ingredients as $ingredient) {
+                if (!is_array(value: $ingredient)) {
+                    continue;
+                }
+                $validIngredientKeys[] = $this->ingredientKey(ingredient: $ingredient);
+            }
+            foreach ($excludedIngredientKeys as $ingredientKey) {
+                if (in_array(needle: $ingredientKey, haystack: $validIngredientKeys, strict: true)) {
+                    continue;
+                }
+                throw new RuntimeException(message: 'Mindestens eine Zutat gehört nicht zu diesem Rezept.');
+            }
             $this->connection->query(
-                'DELETE FROM week_recipe_ingredient_exclusions WHERE year = ? AND week = ? AND recipe_id = ? AND ingredient_key = ?',
+                'DELETE FROM week_recipe_ingredient_exclusions WHERE year = ? AND week = ? AND recipe_id = ?',
                 $year,
                 $week,
-                $recipeId,
-                $ingredientKey
+                $recipeId
             );
-            return;
+            foreach (array_values(array: array_unique(array: $excludedIngredientKeys)) as $ingredientKey) {
+                $this->connection->query(
+                    <<<'SQL'
+                        INSERT INTO week_recipe_ingredient_exclusions (year, week, recipe_id, ingredient_key)
+                        VALUES (?, ?, ?, ?)
+                    SQL
+                    ,
+                    $year,
+                    $week,
+                    $recipeId,
+                    $ingredientKey
+                );
+            }
+            $this->connection->query('COMMIT');
+        } catch (PDOException | RuntimeException $exception) {
+            $this->connection->query('ROLLBACK');
+            throw $exception;
         }
-        $this->connection->query(
-            <<<'SQL'
-                INSERT OR IGNORE INTO week_recipe_ingredient_exclusions (year, week, recipe_id, ingredient_key)
-                VALUES (?, ?, ?, ?)
-            SQL
-            ,
-            $year,
-            $week,
-            $recipeId,
-            $ingredientKey
-        );
     }
 
     public function deleteRecipe(string $sourceId): void

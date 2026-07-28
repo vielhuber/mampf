@@ -92,26 +92,80 @@ final class DatabaseTest extends TestCase
         );
         $database->assignRecipe($recipeId, 2026, 29);
 
-        $database->setWeekIngredientIncluded($recipeId, 2026, 29, 'potato', false);
+        $database->saveWeekIngredientSelection($recipeId, 2026, 29, ['potato'], false);
 
         $recipe = $database->recipes('', 1, 10, 2026, 29)[0];
         $weekRecipe = $database->recipesForWeek(2026, 29)[0];
         $this->assertSame(['potato'], json_decode((string) $recipe['excluded_ingredient_keys_json'], true));
         $this->assertSame(['potato'], json_decode((string) $weekRecipe['excluded_ingredient_keys_json'], true));
 
-        $database->setWeekIngredientIncluded($recipeId, 2026, 29, 'potato', true);
+        $database->saveWeekIngredientSelection($recipeId, 2026, 29, [], false);
         $this->assertSame(
             [],
             json_decode((string) $database->recipesForWeek(2026, 29)[0]['excluded_ingredient_keys_json'], true)
         );
 
-        $database->setWeekIngredientIncluded($recipeId, 2026, 29, 'potato', false);
+        $database->saveWeekIngredientSelection($recipeId, 2026, 29, ['potato'], false);
         $database->removeRecipe($recipeId, 2026, 29);
         $database->assignRecipe($recipeId, 2026, 29);
         $this->assertSame(
             [],
             json_decode((string) $database->recipesForWeek(2026, 29)[0]['excluded_ingredient_keys_json'], true)
         );
+        unlink(filename: $path);
+    }
+
+    public function testIngredientSelectionAssignsRecipeAndStoresAllExclusionsTogether(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $database = new Database(path: $path);
+        $database->upsertRecipe('abc', 'First', 'image', 'https://example.org/abc', null);
+        $recipeId = (int) $database->recipes('', 1, 10, 2026, 29)[0]['id'];
+        $database->updateIngredients(
+            recipeId: $recipeId,
+            ingredients: [
+                ['source_id' => 'potato', 'name' => 'Kartoffeln', 'selected' => ['listing_id' => 'product-1']],
+                ['source_id' => 'salt', 'name' => 'Salz', 'selected' => ['listing_id' => 'product-2']]
+            ]
+        );
+
+        $database->saveWeekIngredientSelection($recipeId, 2026, 29, ['salt'], true);
+
+        $this->assertSame(1, $database->weekRecipeCount(2026, 29));
+        $this->assertSame(
+            ['salt'],
+            json_decode((string) $database->recipesForWeek(2026, 29)[0]['excluded_ingredient_keys_json'], true)
+        );
+
+        $database->saveWeekIngredientSelection($recipeId, 2026, 29, ['potato'], false);
+        $this->assertSame(
+            ['potato'],
+            json_decode((string) $database->recipesForWeek(2026, 29)[0]['excluded_ingredient_keys_json'], true)
+        );
+        unlink(filename: $path);
+    }
+
+    public function testInvalidIngredientSelectionDoesNotAssignRecipe(): void
+    {
+        $path = sys_get_temp_dir() . '/mampf-' . bin2hex(string: random_bytes(length: 8)) . '.sqlite';
+        $database = new Database(path: $path);
+        $database->upsertRecipe('abc', 'First', 'image', 'https://example.org/abc', null);
+        $recipeId = (int) $database->recipes('', 1, 10, 2026, 29)[0]['id'];
+        $database->updateIngredients(
+            recipeId: $recipeId,
+            ingredients: [
+                ['source_id' => 'potato', 'name' => 'Kartoffeln', 'selected' => ['listing_id' => 'product-1']]
+            ]
+        );
+
+        try {
+            $database->saveWeekIngredientSelection($recipeId, 2026, 29, ['unknown'], true);
+            $this->fail('An invalid ingredient selection must fail.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Mindestens eine Zutat gehört nicht zu diesem Rezept.', $exception->getMessage());
+        }
+
+        $this->assertSame(0, $database->weekRecipeCount(2026, 29));
         unlink(filename: $path);
     }
 

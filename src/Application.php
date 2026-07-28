@@ -497,19 +497,36 @@ final class Application
                 echo json_encode(value: ['note' => $note], flags: JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
                 exit();
             }
-            if ($action === 'ingredient-inclusion') {
+            if ($action === 'ingredient-selection') {
                 $year = max(2020, min(2100, (int) ($_POST['year'] ?? date(format: 'o'))));
                 $week = max(1, min(53, (int) ($_POST['week'] ?? date(format: 'W'))));
-                $ingredientKey = trim(string: (string) ($_POST['ingredient_key'] ?? ''));
-                $included = (string) ($_POST['included'] ?? '') === '1';
-                $this->runtime->database->setWeekIngredientIncluded(
+                $excludedIngredientKeys = $_POST['excluded_ingredient_keys'] ?? [];
+                if (!is_array(value: $excludedIngredientKeys)) {
+                    throw new RuntimeException(message: 'Die Zutatenauswahl ist ungültig.');
+                }
+                $excludedIngredientKeys = array_values(
+                    array: array_filter(
+                        array: array_map(
+                            callback: fn(mixed $ingredientKey): string => trim(string: (string) $ingredientKey),
+                            array: $excludedIngredientKeys
+                        ),
+                        callback: fn(string $ingredientKey): bool => $ingredientKey !== ''
+                    )
+                );
+                $this->runtime->database->saveWeekIngredientSelection(
                     recipeId: $recipeId,
                     year: $year,
                     week: $week,
-                    ingredientKey: $ingredientKey,
-                    included: $included
+                    excludedIngredientKeys: $excludedIngredientKeys,
+                    assign: (string) ($_POST['assign'] ?? '') === '1'
                 );
-                echo json_encode(value: ['included' => $included], flags: JSON_THROW_ON_ERROR);
+                echo json_encode(
+                    value: [
+                        'selected' => true,
+                        'week_recipe_count' => $this->runtime->database->weekRecipeCount(year: $year, week: $week)
+                    ],
+                    flags: JSON_THROW_ON_ERROR
+                );
                 exit();
             }
             if (in_array(needle: $action, haystack: ['assign', 'remove'], strict: true)) {
@@ -1250,6 +1267,17 @@ final class Application
             );
             $excludedIngredientKeys = is_array(value: $excludedIngredientKeys) ? $excludedIngredientKeys : [];
             $recipeIngredientCount = (int) $recipe['ingredient_count'];
+            $includedIngredientCount = count(
+                value: array_filter(
+                    array: $ingredients,
+                    callback: fn(mixed $ingredient): bool => is_array(value: $ingredient) &&
+                        !in_array(
+                            needle: $this->runtime->database->ingredientKey(ingredient: $ingredient),
+                            haystack: $excludedIngredientKeys,
+                            strict: true
+                        )
+                )
+            );
             $mappedIngredientCount = count(
                 value: array_filter(
                     array: $ingredients,
@@ -1327,9 +1355,6 @@ final class Application
                             $this->escape(value: $productLabel) .
                             '</span><i data-lucide="external-link" class="mt-0.5 size-3 shrink-0"></i></a>';
                     }
-                    $ingredientControlStyle = $selected ? ' cursor-pointer' : '';
-                    $ingredientInputStyle = $selected ? '' : ' hidden';
-                    $ingredientDisabled = $selected ? '' : ' disabled';
                     $ingredientChecked = in_array(
                         needle: $ingredientKey,
                         haystack: $excludedIngredientKeys,
@@ -1340,9 +1365,7 @@ final class Application
                     $ingredientControl =
                         '<label data-ingredient-inclusion-control data-recipe-id="' .
                         $id .
-                        '" class="flex min-w-0 items-start gap-2' .
-                        $ingredientControlStyle .
-                        '" title="Für den Warenkorb auswählen"><input data-ingredient-inclusion type="checkbox" data-recipe-id="' .
+                        '" class="flex min-w-0 cursor-pointer items-start gap-2" title="Für den Warenkorb auswählen"><input data-ingredient-inclusion type="checkbox" data-recipe-id="' .
                         $id .
                         '" data-year="' .
                         $year .
@@ -1352,10 +1375,7 @@ final class Application
                         $this->escape(value: $ingredientKey) .
                         '" aria-label="' .
                         $ingredientName .
-                        ' für den Warenkorb auswählen" class="ingredient-checkbox mt-0.5 shrink-0' .
-                        $ingredientInputStyle .
-                        '"' .
-                        $ingredientDisabled .
+                        ' für den Warenkorb auswählen" class="ingredient-checkbox mt-0.5 shrink-0"' .
                         $ingredientChecked .
                         '><span class="min-w-0">' .
                         $amountHtml .
@@ -1373,20 +1393,36 @@ final class Application
                     ? 'text-emerald-700 hover:text-emerald-900'
                     : 'text-amber-700 hover:text-amber-900';
                 $statusIcon = $ingredientsComplete ? 'circle-check' : 'circle-alert';
+                $selectionAction = $selected ? 'Speichern' : 'Hinzufügen';
+                $selectionAssign = $selected ? '0' : '1';
+                $ingredientCountLabel = $selected
+                    ? $includedIngredientCount . '/' . $recipeIngredientCount
+                    : (string) $recipeIngredientCount;
                 $status =
                     '<button type="button" data-ingredients-trigger data-hover-trigger aria-expanded="false" class="inline-flex items-center gap-1 text-xs font-medium ' .
                     $statusStyle .
                     '"><i data-lucide="' .
                     $statusIcon .
                     '" class="size-3.5"></i>' .
-                    $mappedIngredientCount .
-                    '/' .
+                    '<span data-ingredient-count data-total="' .
                     $recipeIngredientCount .
-                    ' Zutaten</button><template data-ingredients-template data-hover-template><div class="border-b border-stone-100 px-4 py-3"><p class="text-xs font-medium uppercase text-emerald-700">Zutatenzuordnung</p><p class="mt-0.5 font-semibold text-stone-950">' .
+                    '">' .
+                    $ingredientCountLabel .
+                    '</span> Zutaten</button><template data-ingredients-template data-hover-template><div class="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-stone-100 bg-white px-4 py-3"><div><p class="text-xs font-medium uppercase text-emerald-700">Zutatenzuordnung</p><p class="mt-0.5 font-semibold text-stone-950">' .
                     $name .
-                    '</p></div><div class="grid grid-cols-2 gap-4 bg-stone-50 px-4 py-2 text-xs font-semibold text-stone-500"><span>Rezept</span><span>REWE-Produkt</span></div><div>' .
+                    '</p></div><button data-ingredients-close type="button" title="Schließen" aria-label="Schließen" class="grid size-8 shrink-0 place-items-center rounded-md text-stone-500 hover:bg-stone-100 sm:hidden"><i data-lucide="x" class="size-5"></i></button></div><div class="grid grid-cols-2 gap-4 bg-stone-50 px-4 py-2 text-xs font-semibold text-stone-500"><span>Rezept</span><span>REWE-Produkt</span></div><div>' .
                     $ingredientRows .
-                    '</div></template>';
+                    '</div><div class="sticky bottom-0 border-t border-stone-200 bg-white p-4"><button data-ingredient-selection-save data-recipe-id="' .
+                    $id .
+                    '" data-year="' .
+                    $year .
+                    '" data-week="' .
+                    $week .
+                    '" data-assign="' .
+                    $selectionAssign .
+                    '" type="button" class="flex w-full items-center justify-center gap-2 rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-800"><i data-lucide="check" class="size-4"></i>' .
+                    $selectionAction .
+                    '</button></div></template>';
             }
             $action = $selected ? 'remove' : 'assign';
             $buttonText = $selected ? 'Entfernen' : 'Hinzufügen';
@@ -1511,7 +1547,11 @@ final class Application
                 $dateLabel .
                 '</span><strong class="text-xs leading-4 lg:mt-0.5 lg:text-sm">KW ' .
                 $tileWeek .
-                '</strong><span class="text-[9px] leading-3 opacity-80 lg:mt-0.5 lg:text-[10px]">' .
+                '</strong><span data-week-recipe-count data-year="' .
+                $tileYear .
+                '" data-week="' .
+                $tileWeek .
+                '" class="text-[9px] leading-3 opacity-80 lg:mt-0.5 lg:text-[10px]">' .
                 $tileCountLabel .
                 '</span></a>';
         }
@@ -1631,7 +1671,7 @@ final class Application
                         {$lazyLoaderHtml}
                     </section>
                 </main>
-                <div data-hover-popover data-ingredients-popover role="tooltip" class="fixed z-50 hidden max-h-[min(28rem,calc(100vh-1rem))] w-[min(38rem,calc(100vw-1rem))] overflow-y-auto rounded-lg border border-stone-200 bg-white shadow-xl"></div>
+                <div data-hover-popover data-ingredients-popover role="dialog" aria-modal="false" class="fixed z-50 hidden max-h-[min(28rem,calc(100vh-1rem))] w-[min(38rem,calc(100vw-1rem))] overflow-y-auto rounded-lg border border-stone-200 bg-white shadow-xl"></div>
                 <dialog data-note-dialog class="m-auto w-[min(32rem,calc(100vw-2rem))] rounded-lg border border-stone-200 bg-white p-0 text-stone-950 shadow-xl backdrop:bg-stone-950/30">
                     <form data-note-form class="p-5">
                         <div class="flex items-start justify-between gap-4"><div><p class="text-xs font-medium uppercase text-emerald-700">Notiz</p><h2 data-note-title class="mt-0.5 font-semibold"></h2></div><button type="button" data-note-close title="Schließen" aria-label="Schließen" class="grid size-8 shrink-0 place-items-center rounded-md text-stone-500 hover:bg-stone-100"><i data-lucide="x" class="size-4"></i></button></div>

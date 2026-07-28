@@ -207,9 +207,69 @@ document.querySelectorAll('[data-confirm]').forEach($form => {
     });
 });
 
+let $ingredientsPopover = document.querySelector('[data-hover-popover]');
+let hideIngredientsPopover = () => {};
 let setIngredientChecked = ($checkbox, checked) => {
     $checkbox.checked = checked;
     $checkbox.toggleAttribute('checked', checked);
+};
+let updateWeekAssignmentUi = ($form, result, includedIngredientCount = null) => {
+    let $button = $form.querySelector('[data-week-assignment-button]');
+    let $action = $form.querySelector('[data-week-assignment-action]');
+    let selected = result.selected === true;
+    let selectedClasses = ['border-emerald-700', 'bg-emerald-700', 'text-white', 'hover:bg-emerald-800'];
+    let unselectedClasses = ['border-stone-300', 'bg-white', 'text-stone-700', 'hover:bg-stone-50'];
+    $button.classList.remove(...selectedClasses, ...unselectedClasses);
+    $button.classList.add(...(selected ? selectedClasses : unselectedClasses));
+    $button.title = selected ? 'Entfernen' : 'Hinzufügen';
+    $button.innerHTML = `<i data-lucide="${selected ? 'minus' : 'plus'}" class="size-4"></i>${selected ? 'Entfernen' : 'Hinzufügen'}`;
+    $action.value = selected ? 'remove' : 'assign';
+    createIcons({ icons, root: $button });
+
+    let $article = $form.closest('[data-recipe-id]');
+    let $ingredientTemplate = $article?.querySelector('[data-ingredients-template]');
+    let $ingredientCount = $article?.querySelector('[data-ingredient-count]');
+    if ($ingredientCount !== null && $ingredientCount !== undefined) {
+        let total = Number($ingredientCount.dataset.total);
+        $ingredientCount.textContent = selected && includedIngredientCount !== null
+            ? `${includedIngredientCount}/${total}`
+            : String(total);
+    }
+    let $selectionButton = $ingredientTemplate?.content.querySelector('[data-ingredient-selection-save]');
+    if ($selectionButton !== null && $selectionButton !== undefined) {
+        $selectionButton.dataset.assign = selected ? '0' : '1';
+        $selectionButton.innerHTML = `<i data-lucide="check" class="size-4"></i>${selected ? 'Speichern' : 'Hinzufügen'}`;
+    }
+    if (!selected) {
+        $ingredientTemplate?.content.querySelectorAll('[data-ingredient-inclusion]').forEach($checkbox => {
+            setIngredientChecked($checkbox, true);
+        });
+    }
+
+    let $orderButton = document.querySelector('[data-order-button]');
+    if ($orderButton === null) {
+        return;
+    }
+    let hasRecipes = Number(result.week_recipe_count) > 0;
+    let enabledClasses = ['bg-emerald-700', 'text-white', 'hover:bg-emerald-800'];
+    let disabledClasses = ['bg-stone-300', 'text-stone-500'];
+    $orderButton.classList.remove(...enabledClasses, ...disabledClasses);
+    $orderButton.classList.add(...(hasRecipes ? enabledClasses : disabledClasses));
+    $orderButton.disabled = !hasRecipes;
+    $orderButton.title = hasRecipes
+        ? 'Ausgewählte Woche bei REWE bestellen'
+        : 'Füge dieser Woche zuerst ein Rezept hinzu';
+    $orderButton.toggleAttribute('aria-disabled', !hasRecipes);
+
+    let year = $form.querySelector('[name="year"]')?.value;
+    let week = $form.querySelector('[name="week"]')?.value;
+    let $weekRecipeCount = document.querySelector(
+        `[data-week-recipe-count][data-year="${year}"][data-week="${week}"]`
+    );
+    if ($weekRecipeCount !== null) {
+        let recipeCount = Number(result.week_recipe_count);
+        $weekRecipeCount.textContent = recipeCount === 1 ? '1 Gericht' : `${recipeCount} Gerichte`;
+    }
 };
 
 document.addEventListener('submit', async event => {
@@ -223,63 +283,19 @@ document.addEventListener('submit', async event => {
     if ($button.disabled) {
         return;
     }
+    if ($action.value === 'assign') {
+        $form.closest('[data-recipe-id]')?.querySelector('[data-ingredients-trigger]')?.click();
+        return;
+    }
     $button.disabled = true;
     $button.classList.add('opacity-60');
     try {
-        let response = await fetch('/feedback', {
-            method: 'POST',
-            body: new FormData($form)
-        });
+        let response = await fetch('/feedback', { method: 'POST', body: new FormData($form) });
         let result = await response.json().catch(() => null);
         if (!response.ok || result === null) {
             throw new Error(result?.error || 'Die Wochenzuordnung konnte nicht gespeichert werden.');
         }
-        let selected = result.selected === true;
-        let selectedClasses = ['border-emerald-700', 'bg-emerald-700', 'text-white', 'hover:bg-emerald-800'];
-        let unselectedClasses = ['border-stone-300', 'bg-white', 'text-stone-700', 'hover:bg-stone-50'];
-        $button.classList.remove(...selectedClasses, ...unselectedClasses);
-        $button.classList.add(...(selected ? selectedClasses : unselectedClasses));
-        $button.title = selected ? 'Entfernen' : 'Hinzufügen';
-        $button.innerHTML = `<i data-lucide="${selected ? 'minus' : 'plus'}" class="size-4"></i>${selected ? 'Entfernen' : 'Hinzufügen'}`;
-        $action.value = selected ? 'remove' : 'assign';
-        createIcons({ icons, root: $button });
-
-        let $article = $form.closest('[data-recipe-id]');
-        let $ingredientTemplate = $article?.querySelector('[data-ingredients-template]');
-        let ingredientControls = [
-            ...($ingredientTemplate?.content.querySelectorAll('[data-ingredient-inclusion-control]') || []),
-            ...($ingredientsPopover?.querySelectorAll(
-                `[data-ingredient-inclusion-control][data-recipe-id="${$article?.dataset.recipeId}"]`
-            ) || [])
-        ];
-        ingredientControls.forEach($control => {
-            let $checkbox = $control.querySelector('[data-ingredient-inclusion]');
-            $control.classList.toggle('cursor-pointer', selected);
-            $checkbox.classList.toggle('hidden', !selected);
-            $checkbox.disabled = !selected;
-            if (!selected) {
-                setIngredientChecked($checkbox, true);
-            }
-        });
-
-        let $orderButton = document.querySelector('[data-order-button]');
-        if ($orderButton !== null) {
-            let hasRecipes = Number(result.week_recipe_count) > 0;
-            let enabledClasses = ['bg-emerald-700', 'text-white', 'hover:bg-emerald-800'];
-            let disabledClasses = ['bg-stone-300', 'text-stone-500'];
-            $orderButton.classList.remove(...enabledClasses, ...disabledClasses);
-            $orderButton.classList.add(...(hasRecipes ? enabledClasses : disabledClasses));
-            $orderButton.disabled = !hasRecipes;
-            $orderButton.title = hasRecipes
-                ? 'Ausgewählte Woche bei REWE bestellen'
-                : 'Füge dieser Woche zuerst ein Rezept hinzu';
-            if (hasRecipes) {
-                $orderButton.removeAttribute('aria-disabled');
-            }
-            if (!hasRecipes) {
-                $orderButton.setAttribute('aria-disabled', 'true');
-            }
-        }
+        updateWeekAssignmentUi($form, result);
     } catch (error) {
         showError(error instanceof Error ? error.message : 'Die Wochenzuordnung konnte nicht gespeichert werden.');
     } finally {
@@ -288,21 +304,27 @@ document.addEventListener('submit', async event => {
     }
 });
 
-let $ingredientsPopover = document.querySelector('[data-hover-popover]');
 if ($ingredientsPopover !== null) {
     let $activeIngredientsTrigger = null;
     let hideIngredientsTimeout = null;
-    let hideIngredients = () => {
+    hideIngredientsPopover = () => {
         window.clearTimeout(hideIngredientsTimeout);
         if ($activeIngredientsTrigger !== null) {
             $activeIngredientsTrigger.setAttribute('aria-expanded', 'false');
         }
         $activeIngredientsTrigger = null;
+        document.body.classList.remove('overflow-hidden');
+        $ingredientsPopover.classList.remove('ingredients-mobile-fullscreen');
         $ingredientsPopover.classList.add('hidden');
         $ingredientsPopover.innerHTML = '';
     };
     let positionIngredients = () => {
         if ($activeIngredientsTrigger === null) {
+            return;
+        }
+        if ($ingredientsPopover.classList.contains('ingredients-mobile-fullscreen') && window.innerWidth < 640) {
+            $ingredientsPopover.style.left = '0';
+            $ingredientsPopover.style.top = '0';
             return;
         }
         let triggerBounds = $activeIngredientsTrigger.getBoundingClientRect();
@@ -328,6 +350,10 @@ if ($ingredientsPopover !== null) {
         $activeIngredientsTrigger = $trigger;
         $activeIngredientsTrigger.setAttribute('aria-expanded', 'true');
         $ingredientsPopover.innerHTML = $template.innerHTML;
+        let ingredientPopup = $trigger.matches('[data-ingredients-trigger]');
+        $ingredientsPopover.classList.toggle('ingredients-mobile-fullscreen', ingredientPopup);
+        $ingredientsPopover.setAttribute('aria-modal', ingredientPopup && window.innerWidth < 640 ? 'true' : 'false');
+        document.body.classList.toggle('overflow-hidden', ingredientPopup && window.innerWidth < 640);
         $ingredientsPopover.classList.toggle(
             'w-[min(22rem,calc(100vw-1rem))]',
             $trigger.dataset.popoverSize === 'small'
@@ -343,38 +369,69 @@ if ($ingredientsPopover !== null) {
     let scheduleIngredientsHide = () => {
         window.clearTimeout(hideIngredientsTimeout);
         hideIngredientsTimeout = window.setTimeout(() => {
+            if ($ingredientsPopover.classList.contains('ingredients-mobile-fullscreen')) {
+                return;
+            }
             if ($activeIngredientsTrigger?.matches(':hover, :focus-visible') || $ingredientsPopover.matches(':hover')) {
                 return;
             }
-            hideIngredients();
+            hideIngredientsPopover();
         }, 180);
     };
     document.addEventListener('pointerover', event => {
+        if ($ingredientsPopover.classList.contains('ingredients-mobile-fullscreen')) {
+            return;
+        }
         let $trigger = event.target.closest?.('[data-hover-trigger]');
-        if ($trigger !== null && $trigger !== undefined) {
+        if (
+            $trigger !== null &&
+            $trigger !== undefined &&
+            !$trigger.matches('[data-ingredients-trigger]')
+        ) {
             showIngredients($trigger);
         }
     });
     document.addEventListener('pointerout', event => {
         let $trigger = event.target.closest?.('[data-hover-trigger]');
-        if ($trigger === null || $trigger === undefined || $trigger.contains(event.relatedTarget)) {
+        if (
+            $trigger === null ||
+            $trigger === undefined ||
+            $trigger.matches('[data-ingredients-trigger]') ||
+            $trigger.contains(event.relatedTarget)
+        ) {
             return;
         }
         scheduleIngredientsHide();
     });
     document.addEventListener('focusin', event => {
+        if ($ingredientsPopover.classList.contains('ingredients-mobile-fullscreen')) {
+            return;
+        }
         let $trigger = event.target.closest?.('[data-hover-trigger]');
-        if ($trigger !== null && $trigger !== undefined) {
+        if (
+            $trigger !== null &&
+            $trigger !== undefined &&
+            !$trigger.matches('[data-ingredients-trigger]')
+        ) {
             showIngredients($trigger);
         }
     });
     document.addEventListener('focusout', event => {
         let $trigger = event.target.closest?.('[data-hover-trigger]');
-        if ($trigger !== null && $trigger !== undefined && !$ingredientsPopover.contains(event.relatedTarget)) {
+        if (
+            $trigger !== null &&
+            $trigger !== undefined &&
+            !$trigger.matches('[data-ingredients-trigger]') &&
+            !$ingredientsPopover.contains(event.relatedTarget)
+        ) {
             scheduleIngredientsHide();
         }
     });
     document.addEventListener('click', event => {
+        if (event.target.closest?.('[data-ingredients-close]') !== null) {
+            hideIngredientsPopover();
+            return;
+        }
         let $trigger = event.target.closest?.('[data-hover-trigger]');
         if ($trigger !== null && $trigger !== undefined) {
             event.preventDefault();
@@ -382,64 +439,82 @@ if ($ingredientsPopover !== null) {
             return;
         }
         if (!$ingredientsPopover.contains(event.target)) {
-            hideIngredients();
+            hideIngredientsPopover();
         }
     });
     $ingredientsPopover.addEventListener('pointerenter', () => window.clearTimeout(hideIngredientsTimeout));
-    $ingredientsPopover.addEventListener('pointerleave', scheduleIngredientsHide);
-    document.addEventListener('keydown', event => {
-        if (event.key === 'Escape') {
-            hideIngredients();
+    $ingredientsPopover.addEventListener('pointerleave', () => {
+        if (!$ingredientsPopover.classList.contains('ingredients-mobile-fullscreen')) {
+            scheduleIngredientsHide();
         }
     });
-    window.addEventListener('resize', positionIngredients);
-    window.addEventListener('scroll', hideIngredients, { passive: true });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            hideIngredientsPopover();
+        }
+    });
+    window.addEventListener('resize', () => {
+        let fullscreen = $ingredientsPopover.classList.contains('ingredients-mobile-fullscreen');
+        document.body.classList.toggle('overflow-hidden', fullscreen && window.innerWidth < 640);
+        $ingredientsPopover.setAttribute('aria-modal', fullscreen && window.innerWidth < 640 ? 'true' : 'false');
+        positionIngredients();
+    });
+    window.addEventListener(
+        'scroll',
+        () => {
+            if ($ingredientsPopover.classList.contains('ingredients-mobile-fullscreen')) {
+                return;
+            }
+            hideIngredientsPopover();
+        },
+        { passive: true }
+    );
 }
 
-document.addEventListener('change', async event => {
-    let $checkbox = event.target.closest?.('[data-ingredient-inclusion]');
-    if ($checkbox === null || $checkbox === undefined) {
+document.addEventListener('click', async event => {
+    let $saveButton = event.target.closest?.('[data-ingredient-selection-save]');
+    if ($saveButton === null || $saveButton === undefined || $ingredientsPopover === null) {
         return;
     }
-    let included = $checkbox.checked;
-    $checkbox.disabled = true;
+    $saveButton.disabled = true;
+    $saveButton.classList.add('opacity-60');
+    let checkboxes = [...$ingredientsPopover.querySelectorAll('[data-ingredient-inclusion]')];
     let formData = new FormData();
     formData.set('csrf', document.body.dataset.csrf || '');
-    formData.set('action', 'ingredient-inclusion');
-    formData.set('recipe_id', $checkbox.dataset.recipeId);
-    formData.set('year', $checkbox.dataset.year);
-    formData.set('week', $checkbox.dataset.week);
-    formData.set('ingredient_key', $checkbox.dataset.ingredientKey);
-    formData.set('included', included ? '1' : '0');
+    formData.set('action', 'ingredient-selection');
+    formData.set('recipe_id', $saveButton.dataset.recipeId);
+    formData.set('year', $saveButton.dataset.year);
+    formData.set('week', $saveButton.dataset.week);
+    formData.set('assign', $saveButton.dataset.assign);
+    checkboxes.forEach($checkbox => {
+        if (!$checkbox.checked) {
+            formData.append('excluded_ingredient_keys[]', $checkbox.dataset.ingredientKey);
+        }
+    });
     try {
         let response = await fetch('/feedback', { method: 'POST', body: formData });
         let result = await response.json().catch(() => null);
         if (!response.ok || result === null) {
             throw new Error(result?.error || 'Die Zutatenauswahl konnte nicht gespeichert werden.');
         }
-        document.querySelectorAll('[data-ingredients-template]').forEach($template => {
-            $template.content.querySelectorAll('[data-ingredient-inclusion]').forEach($storedCheckbox => {
-                if (
-                    $storedCheckbox.dataset.recipeId === $checkbox.dataset.recipeId &&
-                    $storedCheckbox.dataset.ingredientKey === $checkbox.dataset.ingredientKey
-                ) {
-                    setIngredientChecked($storedCheckbox, result.included === true);
-                }
-            });
+        let $article = document.querySelector(`article[data-recipe-id="${$saveButton.dataset.recipeId}"]`);
+        let $form = $article?.querySelector('[data-week-assignment-form]');
+        let $template = $article?.querySelector('[data-ingredients-template]');
+        $template?.content.querySelectorAll('[data-ingredient-inclusion]').forEach($storedCheckbox => {
+            let $visibleCheckbox = checkboxes.find(
+                $checkbox => $checkbox.dataset.ingredientKey === $storedCheckbox.dataset.ingredientKey
+            );
+            setIngredientChecked($storedCheckbox, $visibleCheckbox?.checked === true);
         });
-        $ingredientsPopover?.querySelectorAll('[data-ingredient-inclusion]').forEach($visibleCheckbox => {
-            if (
-                $visibleCheckbox.dataset.recipeId === $checkbox.dataset.recipeId &&
-                $visibleCheckbox.dataset.ingredientKey === $checkbox.dataset.ingredientKey
-            ) {
-                setIngredientChecked($visibleCheckbox, result.included === true);
-            }
-        });
+        if ($form !== null && $form !== undefined) {
+            updateWeekAssignmentUi($form, result, checkboxes.filter($checkbox => $checkbox.checked).length);
+        }
+        hideIngredientsPopover();
     } catch (error) {
-        setIngredientChecked($checkbox, !included);
         showError(error instanceof Error ? error.message : 'Die Zutatenauswahl konnte nicht gespeichert werden.');
     } finally {
-        $checkbox.disabled = false;
+        $saveButton.disabled = false;
+        $saveButton.classList.remove('opacity-60');
     }
 });
 
