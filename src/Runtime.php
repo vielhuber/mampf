@@ -27,7 +27,8 @@ final class Runtime
         $this->database = new Database(path: $databasePath);
         $this->httpClient = new HttpClient(
             impersonateBinary: $root . '/.bin/curl-impersonate',
-            proxyListUrl: (string) ($_SERVER['PROXY_LIST_URL'] ?? '')
+            proxyListUrl: (string) ($_SERVER['PROXY_LIST_URL'] ?? ''),
+            proxyUrl: (string) ($_SERVER['PROXY_URL'] ?? '')
         );
         $this->helloFreshScraper = new HelloFreshScraper(database: $this->database, httpClient: $this->httpClient);
         $this->reweClient = new ReweClient(

@@ -39,7 +39,7 @@ solve the human check, sign in, verify the delivery location and confirm the exp
 
 ingredient matching downloads the current market-specific rewe catalog in pages of 500 products for all five sorting modes, merges duplicate listings and replaces the cache on every run. unavailable listings are excluded before recipes are remapped locally without individual fallback searches. ordering reuses the latest cache.
 
-set `PROXY_LIST_URL` in `.config/.env` to a URL returning one HTTP proxy per line: `host:port:username:password` or `http://username:password@host:port` (HTTPS proxies are also accepted). REWE requests use `curl-impersonate` through one randomly selected entry per application run; the list is loaded once, and an unavailable, empty or invalid list fails instead of connecting directly. an empty value keeps direct access. proxy credentials are passed through a private temporary cURL configuration, removed after each request. HelloFresh requests remain direct.
+set `PROXY_URL` in `.config/.env` to an HTTP proxy gateway such as `http://username:password@host:port` (HTTPS proxies are also accepted). alternatively, set `PROXY_LIST_URL` to a URL returning one proxy per line: `host:port:username:password` or a full proxy URL. `PROXY_URL` takes precedence when both are set. REWE requests use `curl-impersonate` through the gateway or one randomly selected list entry per application run; the list is loaded once, and an unavailable, empty or invalid list fails instead of connecting directly. leaving both values empty keeps direct access. proxy credentials are passed through a private temporary cURL configuration, removed after each request. HelloFresh requests remain direct.
 
 ## cron
 

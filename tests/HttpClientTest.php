@@ -149,6 +149,21 @@ final class HttpClientTest extends TestCase
         $this->assertFileDoesNotExist(file_get_contents($this->directory . '/used-proxy'));
     }
 
+    public function testDirectProxyGatewayDoesNotFetchAList(): void
+    {
+        $client = new HttpClient(
+            impersonateBinary: $this->directory . '/curl',
+            proxyListUrl: $this->endpoint . '/missing.txt',
+            proxyUrl: 'http://fixture-user:fixture-password@proxy.example:8080'
+        );
+        $response = $client->requestImpersonated('https://www.rewe.de/shop/');
+        $this->assertSame(200, $response->status);
+        $this->assertSame(
+            "proxy = \"http://fixture-user:fixture-password@proxy.example:8080\"\n",
+            json_decode($response->body, true)['config']
+        );
+    }
+
     public function testMissingProxyConfigurationKeepsDirectRequests(): void
     {
         $client = new HttpClient(impersonateBinary: $this->directory . '/curl');

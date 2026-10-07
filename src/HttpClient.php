@@ -12,8 +12,11 @@ final class HttpClient
     public function __construct(
         private readonly string $impersonateBinary = '',
         private readonly string $impersonateTarget = 'chrome146',
-        private readonly string $proxyListUrl = ''
-    ) {}
+        private readonly string $proxyListUrl = '',
+        string $proxyUrl = ''
+    ) {
+        $this->proxy = $proxyUrl !== '' ? $proxyUrl : null;
+    }
 
     /**
      * Send an HTTP request with PHP cURL.
