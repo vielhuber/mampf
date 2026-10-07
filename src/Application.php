@@ -804,7 +804,7 @@ final class Application
                 );
             }
             $this->sendProgress(
-                progress: 100,
+                progress: $taskProgress,
                 message: $exception->getMessage(),
                 type: 'error',
                 returnUrl: (string) $task['return_url'],

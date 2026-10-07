@@ -242,7 +242,18 @@ final class HttpClient
         $arguments[] = $url;
         $command = implode(separator: ' ', array: array_map(callback: 'escapeshellarg', array: $arguments));
         try {
-            exec(command: $command . ' 2>' . escapeshellarg(arg: $errorFile), output: $output, result_code: $exitCode);
+            for ($attempt = 0; $attempt < 3; $attempt++) {
+                $output = [];
+                exec(
+                    command: $command . ' 2>' . escapeshellarg(arg: $errorFile),
+                    output: $output,
+                    result_code: $exitCode
+                );
+                if ($exitCode !== 56 || $method !== 'GET' || $body !== null || $attempt === 2) {
+                    break;
+                }
+                sleep(seconds: $attempt + 1);
+            }
             $responseBody = (string) file_get_contents(filename: $bodyFile);
             $error = (string) file_get_contents(filename: $errorFile);
         } finally {

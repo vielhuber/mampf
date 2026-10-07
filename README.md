@@ -41,6 +41,8 @@ ingredient matching downloads the current market-specific rewe catalog in pages 
 
 set `PROXY_URL` in `.config/.env` to an HTTP proxy gateway such as `http://username:password@host:port` (HTTPS proxies are also accepted). alternatively, set `PROXY_LIST_URL` to a URL returning one proxy per line: `host:port:username:password` or a full proxy URL. `PROXY_URL` takes precedence when both are set. REWE requests use `curl-impersonate` through the gateway or one randomly selected list entry per application run; the list is loaded once, and an unavailable, empty or invalid list fails instead of connecting directly. leaving both values empty keeps direct access. proxy credentials are passed through a private temporary cURL configuration, removed after each request. HelloFresh requests remain direct.
 
+interrupted REWE GET requests (`cURL exit 56`) are retried twice after one and two seconds. requests with a body and basket changes are not retried automatically. failed tasks retain their last progress percentage.
+
 ## cron
 
 update recipes and rewe ingredient mappings through cron:

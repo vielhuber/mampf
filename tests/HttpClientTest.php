@@ -34,6 +34,15 @@ final class HttpClientTest extends TestCase
                 $position = array_search('--config', $argv, true);
                 $file = $position === false ? null : $argv[$position + 1];
                 $proxy = $file === null ? '' : file_get_contents($file);
+                $attempts = (int) (file_exists(__DIR__ . '/attempts') ? file_get_contents(__DIR__ . '/attempts') : 0) + 1;
+                file_put_contents(__DIR__ . '/attempts', (string) $attempts);
+                if (file_exists(__DIR__ . '/transient') && $attempts <= (int) file_get_contents(__DIR__ . '/transient')) {
+                    file_put_contents(__DIR__ . '/used-proxy', $file);
+                    file_put_contents($output, 'partial response');
+                    echo '000|https://failed.example/';
+                    fwrite(STDERR, 'fixture-password');
+                    exit(56);
+                }
                 if (file_exists(__DIR__ . '/fail')) {
                     file_put_contents(__DIR__ . '/used-proxy', $file);
                     fwrite(STDERR, 'fixture-password');
@@ -162,6 +171,57 @@ final class HttpClientTest extends TestCase
             "proxy = \"http://fixture-user:fixture-password@proxy.example:8080\"\n",
             json_decode($response->body, true)['config']
         );
+    }
+
+    public function testInterruptedGetIsRetriedWithoutKeepingPartialResponse(): void
+    {
+        file_put_contents($this->directory . '/transient', '2');
+        $client = new HttpClient(
+            impersonateBinary: $this->directory . '/curl',
+            proxyUrl: 'http://fixture-user:fixture-password@proxy.example:8080'
+        );
+        $response = $client->requestImpersonated('https://www.rewe.de/shop/');
+        $this->assertSame(200, $response->status);
+        $this->assertSame('https://www.rewe.de/shop/', $response->finalUrl);
+        $this->assertSame('3', file_get_contents($this->directory . '/attempts'));
+        $this->assertIsArray(json_decode($response->body, true));
+        $this->assertFileDoesNotExist(file_get_contents($this->directory . '/used-proxy'));
+    }
+
+    public function testInterruptedGetStopsAfterThreeAttemptsWithoutExposingCredentials(): void
+    {
+        file_put_contents($this->directory . '/transient', '9');
+        $client = new HttpClient(
+            impersonateBinary: $this->directory . '/curl',
+            proxyUrl: 'http://fixture-user:fixture-password@proxy.example:8080'
+        );
+        try {
+            $client->requestImpersonated('https://www.rewe.de/shop/');
+            $this->fail('Persistent receive error was not reported.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('HTTP-Anfrage über Proxy fehlgeschlagen (cURL exit 56).', $exception->getMessage());
+        }
+        $this->assertSame('3', file_get_contents($this->directory . '/attempts'));
+        $this->assertFileDoesNotExist(file_get_contents($this->directory . '/used-proxy'));
+    }
+
+    public function testInterruptedRequestsWithPotentialSideEffectsAreNotRetried(): void
+    {
+        file_put_contents($this->directory . '/transient', '9');
+        $client = new HttpClient(
+            impersonateBinary: $this->directory . '/curl',
+            proxyUrl: 'http://fixture-user:fixture-password@proxy.example:8080'
+        );
+        foreach (['POST', 'GET'] as $method) {
+            file_put_contents($this->directory . '/attempts', '0');
+            try {
+                $client->requestImpersonated('https://www.rewe.de/shop/', method: $method, body: '{}');
+                $this->fail('Receive error was not reported.');
+            } catch (RuntimeException $exception) {
+                $this->assertSame('HTTP-Anfrage über Proxy fehlgeschlagen (cURL exit 56).', $exception->getMessage());
+            }
+            $this->assertSame('1', file_get_contents($this->directory . '/attempts'));
+        }
     }
 
     public function testMissingProxyConfigurationKeepsDirectRequests(): void
