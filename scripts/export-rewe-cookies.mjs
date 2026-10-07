@@ -73,6 +73,7 @@ chromeProcess.once('exit', code => {
 chromeProcess.once('error', error => {
     chromeStartError = error;
 });
+let chromeClosed = new Promise(resolvePromise => chromeProcess.once('close', resolvePromise));
 process.once('exit', () => {
     if (chromeProcess.exitCode === null && chromeProcess.signalCode === null) {
         chromeProcess.kill();
@@ -179,5 +180,11 @@ for (let cookieExport of cookieExports) {
 }
 
 socket.send(JSON.stringify({ id: 2, method: 'Browser.close' }));
+await chromeClosed;
 socket.close();
+if (chromeProcess.exitCode !== 0) {
+    throw new Error(
+        `Die Cookies wurden gespeichert, aber Chrome wurde nicht sauber beendet (${chromeProcess.signalCode ?? chromeProcess.exitCode}).`
+    );
+}
 console.log('Fertig. Vorhandene Exporte wurden jeweils als .bak gesichert.');
