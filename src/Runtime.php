@@ -25,7 +25,10 @@ final class Runtime
         $databasePath = $root . '/.data/mampf.sqlite';
         $cookieFile = $root . '/.config/rewe-shop.json';
         $this->database = new Database(path: $databasePath);
-        $this->httpClient = new HttpClient(impersonateBinary: $root . '/.bin/curl-impersonate');
+        $this->httpClient = new HttpClient(
+            impersonateBinary: $root . '/.bin/curl-impersonate',
+            proxyListUrl: (string) ($_SERVER['PROXY_LIST_URL'] ?? '')
+        );
         $this->helloFreshScraper = new HelloFreshScraper(database: $this->database, httpClient: $this->httpClient);
         $this->reweClient = new ReweClient(
             database: $this->database,

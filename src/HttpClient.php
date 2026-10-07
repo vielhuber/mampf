@@ -7,9 +7,12 @@ use RuntimeException;
 
 final class HttpClient
 {
+    private ?string $proxy = null;
+
     public function __construct(
         private readonly string $impersonateBinary = '',
-        private readonly string $impersonateTarget = 'chrome146'
+        private readonly string $impersonateTarget = 'chrome146',
+        private readonly string $proxyListUrl = ''
     ) {}
 
     /**
@@ -142,6 +145,43 @@ final class HttpClient
         if ($this->impersonateBinary === '' || !is_executable(filename: $this->impersonateBinary)) {
             throw new RuntimeException(message: 'curl-impersonate ist nicht unter .bin/curl-impersonate installiert.');
         }
+        if ($this->proxyListUrl !== '' && $this->proxy === null) {
+            try {
+                $list = $this->request(url: $this->proxyListUrl);
+            } catch (RuntimeException) {
+                throw new RuntimeException(message: 'Die Proxy-Liste konnte nicht geladen werden.');
+            }
+            if ($list->status !== 200) {
+                throw new RuntimeException(message: 'Die Proxy-Liste antwortete mit HTTP ' . $list->status . '.');
+            }
+            $entries = array_values(array_filter(array_map('trim', preg_split('/\R/', $list->body))));
+            if ($entries === []) {
+                throw new RuntimeException(message: 'Die Proxy-Liste ist leer.');
+            }
+            $proxy = $entries[random_int(0, count($entries) - 1)];
+            if (!str_contains($proxy, '://')) {
+                $parts = explode(':', $proxy, 4);
+                if (count($parts) !== 4) {
+                    throw new RuntimeException(message: 'Die Proxy-Liste enthält einen ungültigen Eintrag.');
+                }
+                $proxy =
+                    'http://' .
+                    rawurlencode($parts[2]) .
+                    ':' .
+                    rawurlencode($parts[3]) .
+                    '@' .
+                    $parts[0] .
+                    ':' .
+                    $parts[1];
+            }
+            if (
+                filter_var($proxy, FILTER_VALIDATE_URL) === false ||
+                !in_array(parse_url($proxy, PHP_URL_SCHEME), ['http', 'https'], true)
+            ) {
+                throw new RuntimeException(message: 'Die Proxy-Liste enthält einen ungültigen Eintrag.');
+            }
+            $this->proxy = $proxy;
+        }
         $bodyFile = tempnam(directory: sys_get_temp_dir(), prefix: 'mampf-body-');
         $errorFile = tempnam(directory: sys_get_temp_dir(), prefix: 'mampf-error-');
         if ($bodyFile === false || $errorFile === false) {
@@ -163,6 +203,21 @@ final class HttpClient
             '-w',
             '%{http_code}|%{url_effective}'
         ];
+        $proxyFile = null;
+        if ($this->proxy !== null) {
+            $proxyFile = tempnam(directory: sys_get_temp_dir(), prefix: 'mampf-proxy-');
+            if ($proxyFile === false) {
+                unlink(filename: $bodyFile);
+                unlink(filename: $errorFile);
+                throw new RuntimeException(message: 'Temporäre Proxy-Konfiguration konnte nicht erstellt werden.');
+            }
+            file_put_contents(
+                filename: $proxyFile,
+                data: 'proxy = "' . addcslashes($this->proxy, "\\\"\n\r\t\v") . '"' . PHP_EOL
+            );
+            $arguments[] = '--config';
+            $arguments[] = $proxyFile;
+        }
         if (!in_array(needle: $method, haystack: ['GET', 'POST'], strict: true)) {
             $arguments[] = '-X';
             $arguments[] = $method;
@@ -183,12 +238,23 @@ final class HttpClient
         }
         $arguments[] = $url;
         $command = implode(separator: ' ', array: array_map(callback: 'escapeshellarg', array: $arguments));
-        exec(command: $command . ' 2>' . escapeshellarg(arg: $errorFile), output: $output, result_code: $exitCode);
-        $responseBody = (string) file_get_contents(filename: $bodyFile);
-        $error = (string) file_get_contents(filename: $errorFile);
-        unlink(filename: $bodyFile);
-        unlink(filename: $errorFile);
+        try {
+            exec(command: $command . ' 2>' . escapeshellarg(arg: $errorFile), output: $output, result_code: $exitCode);
+            $responseBody = (string) file_get_contents(filename: $bodyFile);
+            $error = (string) file_get_contents(filename: $errorFile);
+        } finally {
+            unlink(filename: $bodyFile);
+            unlink(filename: $errorFile);
+            if ($proxyFile !== null) {
+                unlink(filename: $proxyFile);
+            }
+        }
         if ($exitCode !== 0) {
+            if ($this->proxy !== null) {
+                throw new RuntimeException(
+                    message: 'HTTP-Anfrage über Proxy fehlgeschlagen (cURL exit ' . $exitCode . ').'
+                );
+            }
             throw new RuntimeException(message: 'HTTP-Anfrage fehlgeschlagen: ' . trim(string: $error));
         }
         [$status, $finalUrl] = array_pad(
